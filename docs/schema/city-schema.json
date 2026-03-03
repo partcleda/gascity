@@ -1082,6 +1082,10 @@
         "socket": {
           "type": "string",
           "description": "Socket specifies the tmux socket name for per-city isolation.\nWhen set, all tmux commands use \"tmux -L \u003csocket\u003e\" to connect to\na dedicated server. Empty means use the default tmux server.\nTypical usage: set to the city name (e.g., \"bright-lights\")."
+        },
+        "remote_match": {
+          "type": "string",
+          "description": "RemoteMatch is a substring pattern for the hybrid provider to route\nsessions to the remote (K8s) backend. Sessions whose names contain\nthis pattern go to K8s; all others stay local (tmux).\nOverridden by the GC_HYBRID_REMOTE_MATCH env var if set."
         }
       },
       "additionalProperties": false,

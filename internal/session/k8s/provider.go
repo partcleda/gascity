@@ -590,13 +590,23 @@ func initBeadsInPod(ctx context.Context, ops k8sOps, podName string, cfg session
 		}
 	}
 
-	// Run: yes | bd init --server --server-host HOST --server-port PORT -p PREFIX --skip-hooks
-	initCmd := fmt.Sprintf(
-		"cd %s && yes | bd init --server --server-host %s --server-port %s -p %s --skip-hooks",
-		workDir, doltHost, doltPort, prefix.String(),
+	// Patch the host-side Dolt address in the beads metadata to point at the
+	// in-cluster service. This preserves the correct database name from the
+	// host config while fixing the server address for the pod.
+	patchCmd := fmt.Sprintf(
+		`cd %s && if [ -f .beads/metadata.json ]; then `+
+			`python3 -c "import json,sys; `+
+			`m=json.load(open('.beads/metadata.json')); `+
+			`m['dolt_server_host']='%s'; `+
+			`m['dolt_server_port']=%s; `+
+			`json.dump(m,open('.beads/metadata.json','w'),indent=2)" 2>/dev/null || `+
+			`sed -i 's/"dolt_server_host":.*/"dolt_server_host": "%s",/' .beads/metadata.json && `+
+			`sed -i 's/"dolt_server_port":.*/"dolt_server_port": %s/' .beads/metadata.json; `+
+			`else yes | bd init --server --server-host %s --server-port %s -p %s --skip-hooks; fi`,
+		workDir, doltHost, doltPort, doltHost, doltPort, doltHost, doltPort, prefix.String(),
 	)
 	_, err := ops.execInPod(ctx, podName, "agent",
-		[]string{"sh", "-c", initCmd}, nil)
+		[]string{"sh", "-c", patchCmd}, nil)
 	return err
 }
 

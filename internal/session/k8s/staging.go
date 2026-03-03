@@ -167,6 +167,11 @@ func tarDir(dir string, w io.Writer) error {
 			}
 		}
 
+		// Skip sockets and other special file types unsupported by tar.
+		if info.Mode()&(os.ModeSocket|os.ModeNamedPipe|os.ModeDevice) != 0 {
+			return nil
+		}
+
 		header, err := tar.FileInfoHeader(info, "")
 		if err != nil {
 			return err
@@ -186,7 +191,9 @@ func tarDir(dir string, w io.Writer) error {
 			return err
 		}
 		defer func() { _ = f.Close() }()
-		_, err = io.Copy(tw, f)
+		// Limit copy to declared header size to avoid "write too long" if
+		// the file grew between stat and read (e.g., events.jsonl).
+		_, err = io.CopyN(tw, f, header.Size)
 		return err
 	})
 }

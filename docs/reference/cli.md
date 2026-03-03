@@ -1160,16 +1160,22 @@ Send a message to an agent or human.
 Creates a message bead addressed to the recipient. The sender defaults
 to $GC_AGENT (in agent sessions) or "human". Use --notify to nudge
 the recipient after sending. Use --from to override the sender identity.
+Use --to as an alternative to the positional <to> argument.
+Use -s/--subject and -m/--message as alternatives to the positional
+<body> argument (when both are set, they are joined with a blank line).
 Use --all to broadcast to all agents (excluding sender and "human").
 
 ```
-gc mail send <to> <body> [flags]
+gc mail send [<to>] [<body>] [flags]
 ```
 
 **Example:**
 
 ```
 gc mail send mayor "Build is green"
+  gc mail send mayor -s "Build is green"
+  gc mail send mayor/ -s "ESCALATION: Auth broken" -m "Token refresh fails after 30min"
+  gc mail send --to mayor "Build is green"
   gc mail send human "Review needed for PR #42"
   gc mail send polecat "Priority task" --notify
   gc mail send --all "Status update: tests passing"
@@ -1179,7 +1185,10 @@ gc mail send mayor "Build is green"
 |------|------|---------|-------------|
 | `--all` | bool |  | broadcast to all agents (excludes sender and human) |
 | `--from` | string |  | sender identity (default: $GC_AGENT or "human") |
+| `-m`, `--message` | string |  | message body text |
 | `--notify` | bool |  | nudge the recipient after sending |
+| `-s`, `--subject` | string |  | message subject line |
+| `--to` | string |  | recipient address (alternative to positional argument) |
 
 ## gc prime
 
@@ -1463,6 +1472,7 @@ gc topology list
 Print gc version, git commit, and build date.
 
 Version information is injected via ldflags at build time.
+When built with go install, VCS metadata is read from the binary.
 
 ```
 gc version

@@ -57,7 +57,7 @@ func buildPod(name string, cfg session.Config, p *Provider) *corev1.Pod {
 		preStartCmds += c + "; "
 	}
 
-	credCopy := `mkdir -p $HOME/.claude && cp -rL /tmp/claude-secret/. $HOME/.claude/ 2>/dev/null; mkdir -p /workspace/.gc; `
+	credCopy := `mkdir -p $HOME/.claude && cp -rL /tmp/claude-secret/. $HOME/.claude/ 2>/dev/null; git config --global --add safe.directory '*' 2>/dev/null; `
 	wsWait := ""
 	if !p.prebaked {
 		wsWait = `while [ ! -f /workspace/.gc-workspace-ready ]; do sleep 0.5; done; `

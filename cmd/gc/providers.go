@@ -253,7 +253,10 @@ func newHybridProvider(sc config.SessionConfig) (session.Provider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("hybrid: k8s backend: %w", err)
 	}
-	pattern := os.Getenv("GC_HYBRID_REMOTE_MATCH")
+	pattern := sc.RemoteMatch
+	if v := os.Getenv("GC_HYBRID_REMOTE_MATCH"); v != "" {
+		pattern = v
+	}
 	return sessionhybrid.New(local, remote, func(name string) bool {
 		return pattern != "" && strings.Contains(name, pattern)
 	}), nil

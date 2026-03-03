@@ -330,6 +330,7 @@ SessionConfig holds session provider settings.
 | `display_ms` | integer |  | `5000` | DisplayMs is the default display duration in milliseconds for status messages. Defaults to 5000. |
 | `startup_timeout` | string |  | `60s` | StartupTimeout is how long to wait for each agent's Start() call before treating it as failed. Duration string (e.g., "60s", "2m"). Defaults to "60s". |
 | `socket` | string |  |  | Socket specifies the tmux socket name for per-city isolation. When set, all tmux commands use "tmux -L <socket>" to connect to a dedicated server. Empty means use the default tmux server. Typical usage: set to the city name (e.g., "bright-lights"). |
+| `remote_match` | string |  |  | RemoteMatch is a substring pattern for the hybrid provider to route sessions to the remote (K8s) backend. Sessions whose names contain this pattern go to K8s; all others stay local (tmux). Overridden by the GC_HYBRID_REMOTE_MATCH env var if set. |
 
 ## TopologySource
 

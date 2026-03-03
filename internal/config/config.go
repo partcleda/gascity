@@ -403,6 +403,11 @@ type SessionConfig struct {
 	// a dedicated server. Empty means use the default tmux server.
 	// Typical usage: set to the city name (e.g., "bright-lights").
 	Socket string `toml:"socket,omitempty"`
+	// RemoteMatch is a substring pattern for the hybrid provider to route
+	// sessions to the remote (K8s) backend. Sessions whose names contain
+	// this pattern go to K8s; all others stay local (tmux).
+	// Overridden by the GC_HYBRID_REMOTE_MATCH env var if set.
+	RemoteMatch string `toml:"remote_match,omitempty"`
 }
 
 // SetupTimeoutDuration returns the setup timeout as a time.Duration.
