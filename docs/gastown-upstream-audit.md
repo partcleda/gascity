@@ -525,14 +525,15 @@ improvements.
   City had the same bug: stale wisps from failed mid-batch dispatch blocked
   re-sling. Fixed: `checkNoMoleculeChildren` and `checkBatchNoMoleculeChildren`
   now skip closed molecules and auto-burn open molecules on unassigned beads.
-- [ ] **9b4e67a2** — Burn previous root wisps before new patrol. Patrol
-  agents (witness, deacon) burn their old wisp before creating a new one,
-  preventing wisp accumulation.
-- [ ] **53abdc44** — Pass `--root-only` to `autoSpawnPatrol`. Ensures
-  auto-spawned patrols use root-only wisps consistently.
-- [ ] **5b9aafc3** + **5769ea01** — Wisp orphan prevention. Two-commit fix
-  ensuring wisps are properly parented and cleaned up when their owning
-  agent terminates.
+- [-] **9b4e67a2** — Burn previous root wisps before new patrol. Gas City's
+  controller-level wisp GC (`wisp_gc.go`) handles accumulation on a timer.
+  Upstream needed per-cycle GC because Gas Town lacks controller-level GC.
+- [-] **53abdc44** — Pass `--root-only` to `autoSpawnPatrol`. Gas City is
+  root-only by default (MolCook creates no child step beads). Already at parity.
+- [-] **5b9aafc3** + **5769ea01** — Wisp orphan prevention. Gas City's
+  formula-driven patrol loop (agent pours next wisp before burning current)
+  avoids the status-mismatch bug that caused duplicate wisps in Gas Town's
+  Go-level autoSpawnPatrol.
 
 ---
 
@@ -541,18 +542,18 @@ improvements.
 Extends Section 6. Witness patrol behavioral improvements and health
 monitoring enhancements.
 
-- [ ] **cee8763f** + **35353a80** — Handoff cooldown. After a bead is handed
-  off between agents, a cooldown period prevents immediate re-handoff.
-  Crew and mayor are exempt (they always accept handoffs).
-- [ ] **ac859828** — Verify work on main before resetting abandoned beads.
-  Witness checks whether the abandoned bead's branch was already merged to
-  main before resetting it to the pool (prevents duplicate work).
-- [ ] **a237024a** — Spawning state in witness action table. Agents in
-  "spawning" state are now tracked separately from "idle" and "active" in
-  the witness survey, preventing premature intervention.
-- [ ] **c5d486e2** — Heartbeat v2: agent-reported state. Agents write their
-  own state to their agent bead (active, idle, blocked) instead of witness
-  inferring state from external signals.
+- [-] **cee8763f** + **35353a80** — Handoff cooldown. Gas Town Go-level patrol
+  logic. In Gas City, anti-ping-pong behavior is prompt guidance in the
+  witness formula, not SDK infrastructure (ZFC principle).
+- [x] **ac859828** — Verify work on main before resetting abandoned beads.
+  Added merge-base check to witness patrol formula Step 3: if branch is
+  already on main, close the bead instead of resetting to pool.
+- [-] **a237024a** — Spawning state in witness action table. Gas Town
+  Go-level survey logic. Gas City witness checks live session state via CLI;
+  spawning agents have active sessions visible to the witness.
+- [-] **c5d486e2** — Heartbeat v2: agent-reported state. Requires Go changes
+  to agent protocol. Gas City uses inference-based health (wisp freshness,
+  bead timestamps). Self-reported state deferred to heartbeat SDK work.
 - [-] **33536975** — Witness race conditions. Gas Town-internal fix for
   concurrent witness patrol runs conflicting on Dolt writes. N/A — Gas City
   uses filesystem beads with atomic writes.
@@ -566,16 +567,33 @@ monitoring enhancements.
 
 Extends Section 12b. Dispatch improvements and error handling.
 
-- [ ] **a6fa0b91** + **5c9c749a** + **65ee6d6d** — Per-bead respawn circuit
-  breaker. Three-commit series adding a circuit breaker that prevents a
-  single bead from being respawned indefinitely. After N respawns (configurable),
-  the bead is escalated instead of retried.
-- [ ] **783cbf77** — `--agent` override for formula run + convoy per-leg
-  routing. Allows forcing a specific agent to run a formula, and convoys
-  can route individual legs to specific agents.
-- [ ] **d980d0dc** — Resolve rig-prefixed beads in sling. Sling can now
-  dispatch beads that reference a specific rig (e.g., `myrig:bead-123`)
-  to agents in that rig's context.
+- [-] **a6fa0b91** + **5c9c749a** + **65ee6d6d** — Per-bead respawn circuit
+  breaker. Already covered by Gas City's `spawn-storm-detect` exec
+  automation in maintenance pack (ported in S6b).
+- [-] **783cbf77** — `--agent` override for formula run. Gas City sling
+  already takes target agent as positional arg. N/A.
+- [-] **d980d0dc** — Resolve rig-prefixed beads in sling. Already at parity:
+  `findRigByPrefix`, `beadPrefix`, `checkCrossRig` in cmd_sling.go.
+
+### 18f. Convoy parity gaps (discovered during S18.2 review)
+
+Gas Town convoys are a cross-rig coordination mechanism with reactive
+event-driven feeding. Gas City has convoy CRUD/status/autoclose but is
+missing the coordination layer:
+
+- [ ] **Reactive feeding** — `feedNextReadyIssue` triggered by bead close
+  events via `CheckConvoysForIssue`. Without this, convoy progress depends
+  on polling (patrol cycles finding stranded work).
+- [ ] **`tracks` dependency type** — convoys use `tracks` deps to link
+  issues across rigs. Gas City beads use parent-child only.
+- [ ] **Cross-rig dependency resolution** — `isIssueBlocked` checks
+  `blocks`, `conditional-blocks`, `waits-for` dep types with cross-rig
+  status freshness.
+- [ ] **Staged convoy statuses** — `staged_ready`, `staged_warnings`
+  prevent feeding before convoy is launched.
+- [ ] **Rig-prefix dispatch** — `rigForIssue` + `dispatchIssue` routes
+  each convoy leg to its rig's polecat pool based on bead ID prefix.
+  Gas City sling has prefix resolution but convoy doesn't use it.
 - [-] **9f33b97d** — Nil `cobra.Command` guard. Gas Town internal defensive
   check. N/A.
 - [-] **5d9406e1** — Prevent duplicate polecat spawns. Gas Town internal
@@ -589,12 +607,11 @@ Extends Section 12b. Dispatch improvements and error handling.
 New theme. Convoy is Gas Town's multi-leg work coordination mechanism
 (a molecule whose steps route to different agents).
 
-- [ ] **22254cca** + **c9f2d264** — Custom convoy statuses: `staged_ready`
-  and `staged_warnings`. Allows convoys to be staged for review before
-  final dispatch, with optional warning annotations.
-- [ ] **860cd03a** — Non-slingable blockers in wave computation. When
-  computing which convoy legs can run in parallel, legs blocked by
-  non-dispatchable beads are excluded from the current wave.
+- [-] **22254cca** + **c9f2d264** — Custom convoy statuses: `staged_ready`
+  and `staged_warnings`. Captured in S18f convoy parity gaps (staged
+  convoy statuses).
+- [-] **860cd03a** — Non-slingable blockers in wave computation. Captured
+  in S18f convoy parity gaps (cross-rig dependency resolution).
 - [-] **85b75405** — Capture `bd` stderr in convoy ops. Gas Town internal
   error handling improvement. N/A.
 
@@ -604,18 +621,21 @@ New theme. Convoy is Gas Town's multi-leg work coordination mechanism
 
 Extends Section 4. Adds a pre-verification step before merge queue entry.
 
-- [ ] **2966c074** — Pre-verify step in polecat work v8 formula. Before
-  submitting to refinery, polecat runs a verification pass (build + targeted
-  tests) to catch obvious failures early.
-- [ ] **73d4edfe** — `gt done --pre-verified` flag. Polecat signals that
-  pre-verification passed, so refinery can fast-path the merge queue entry.
-- [ ] **5fe1b0f6** — Refinery pre-verification fast-path. When a bead
-  arrives with `pre_verified=true`, refinery skips its own verification
-  step and proceeds directly to merge.
-- [ ] **07b890d0** — `MRPreVerification` bead fields. New metadata fields
-  on MR beads to track pre-verification status and results.
-- [ ] **b24df9ea** — Remove "reject back to polecat" from refinery template.
-  Pre-verification means fewer rejections; the rejection path is simplified.
+- [~] **2966c074** — Pre-verify step in polecat work formula. Concept is
+  sound (polecat runs build+test before submission to reduce refinery
+  rejects). Deferred: add pre-verify step between self-review and
+  submit-and-exit in mol-polecat-work when we tune the pipeline.
+- [-] **73d4edfe** — `gt done --pre-verified` flag. Gas Town CLI flag.
+  Gas City can use bead metadata (`--set-metadata pre_verified=true`)
+  directly. N/A.
+- [~] **5fe1b0f6** — Refinery pre-verification fast-path. Deferred with
+  S20 pre-verify step above — refinery checks `metadata.pre_verified`
+  and skips its own test run.
+- [-] **07b890d0** — `MRPreVerification` bead fields. Gas Town MR bead
+  infrastructure. N/A — Gas City uses work beads directly.
+- [-] **b24df9ea** — Remove "reject back to polecat" from refinery template.
+  Gas Town template simplification. Our refinery formula already handles
+  rejection cleanly via pool reset.
 - [-] **33364623**, **45541103**, **e2695fd6** — Gas Town internal MR/refinery
   fixes. Bug fixes in MR state machine. N/A.
 
@@ -625,19 +645,17 @@ Extends Section 4. Adds a pre-verification step before merge queue entry.
 
 Extends Section 1. Incremental improvements to the persistent polecat model.
 
-- [ ] **4037bc86** — Unified `DoneIntentGracePeriod` constant. Consolidates
-  scattered grace period values into a single constant controlling how long
-  the system waits after a polecat signals "done" before considering it idle.
-- [ ] **e09073eb** — Idle sandbox detection matches actual `cleanupStatus`.
-  Fixes mismatch where witness was checking a different field than what
-  `gt done` actually sets, causing false "dirty sandbox" alerts.
-- [ ] **082fbedc** + **5fa9dc2b** — Docs: remove "Idle Polecat Heresy".
-  Documentation updated to reflect that idle polecats are the normal,
-  expected state — not a heresy to be corrected.
-- [ ] **c6173cd7** — `gt done` closes hooked bead regardless of status.
-  Previously, `gt done` only closed the bead if it was in "active" status.
-  Now it closes it unconditionally, preventing orphaned active beads when
-  a polecat completes work on a bead that was concurrently modified.
+- [-] **4037bc86** — Unified `DoneIntentGracePeriod` constant. Gas Town Go
+  daemon code. N/A.
+- [-] **e09073eb** — Idle sandbox detection matches actual `cleanupStatus`.
+  Gas Town Go witness code. N/A.
+- [-] **082fbedc** + **5fa9dc2b** — Docs: remove "Idle Polecat Heresy".
+  Gas Town moved to persistent polecats where idle is normal. Gas City
+  polecats are still ephemeral (spawn, work, exit) — the Heresy framing
+  is correct for our model. Update when/if we add persistent polecats.
+- [-] **c6173cd7** — `gt done` closes hooked bead regardless of status.
+  Gas Town `gt done` CLI code. N/A — Gas City polecats use `bd update`
+  directly in the formula submit step.
 
 ---
 
@@ -711,10 +729,11 @@ configuration patterns.
 9. [x] **Config/Operational** (Section 12) — SDK-level features
 10. [-] **Formula System** (Section 10) — N/A, designed minimal-first
 11. [~] Remaining sections (5, 7, 13) — 5+7 done; 13.4-5 done; 13.1-3 deferred (blocked on S1/S2)
-12. [ ] **ZFC Fixes Delta 2** (S14) — IsBeadActivelyWorked removal, Doctor Dog formula delegation, typed enums
-13. [ ] **Formula/Molecule Delta 2** (S16) — pour flag, auto-burn, patrol audit, capability ledger
-14. [ ] **Witness/Health Delta 2** (S17) — handoff cooldown, heartbeat v2, verify-before-reset
-15. [ ] **Sling/Dispatch Delta 2** (S18) — respawn circuit breaker, per-leg routing
-16. [ ] **Pre-verification Delta 2** (S20) — polecat pre-verify, refinery fast-path
-17. [ ] **Persistent Polecat Delta 2** (S21) — done-intent, idle sandbox, heresy removal
+12. [-] **ZFC Fixes Delta 2** (S14) — all N/A (Gas Town Go code)
+13. [x] **Formula/Molecule Delta 2** (S16) — pour flag, auto-burn stale molecules, dolt-health step, capability ledger already at parity
+14. [-] **Witness/Health Delta 2** (S17) — verify-before-reset ported to witness formula; rest N/A (Go code)
+15. [-] **Sling/Dispatch Delta 2** (S18) — all N/A; convoy parity gaps captured in S18f
+16. [~] **Pre-verification Delta 2** (S20) — deferred (polecat pre-verify + refinery fast-path)
+17. [-] **Persistent Polecat Delta 2** (S21) — all N/A (Go code, persistent polecat model)
 18. [-] **Low-relevance bulk** (S22) — TOCTOU, OTel, Dolt, daemon, proxy, namepool, build/CI
+19. [ ] **Convoy parity** (S18f) — reactive feeding, tracks deps, staged statuses, cross-rig dispatch

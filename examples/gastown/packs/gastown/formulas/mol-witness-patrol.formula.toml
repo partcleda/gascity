@@ -217,7 +217,28 @@ no branch on origin.**
 Nothing to salvage. The bead goes back to pool and a new polecat
 starts fresh.
 
-**Step 3: Clean up worktree and return bead to pool.**
+**Step 3: Verify work on main before resetting.**
+
+Before resetting the bead to pool, check if the branch was already merged
+to main (polecat finished, pushed, but crashed before closing the bead):
+```bash
+git log main --oneline | grep -q "$BRANCH"
+# Or check if branch commits are reachable from main:
+git merge-base --is-ancestor origin/$BRANCH origin/main
+```
+
+If the work is already on main:
+- **Close the bead** (work is done, don't re-dispatch):
+```bash
+bd close <bead>
+gc mail send mayor/ -s "ORPHAN_CLOSED: <bead> already merged" \
+  -m "Branch $BRANCH already on main. Closed instead of resetting."
+```
+- Clean up worktree and skip to Step 4.
+
+If the work is NOT on main, proceed with reset:
+
+**Step 3b: Clean up worktree and return bead to pool.**
 
 Once the branch is canonical (on origin), the worktree is disposable:
 ```bash
