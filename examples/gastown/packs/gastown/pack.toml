@@ -22,6 +22,12 @@ name = "check-scripts"
 script = "doctor/check-scripts.sh"
 description = "Verify pack scripts are executable"
 
+[[commands]]
+name = "status"
+description = "Show gastown orchestration overview"
+long_description = "commands/status-help.txt"
+script = "commands/status.sh"
+
 [formulas]
 dir = "formulas"
 

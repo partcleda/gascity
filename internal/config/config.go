@@ -255,6 +255,22 @@ type PackDoctorEntry struct {
 	Description string `toml:"description,omitempty"`
 }
 
+// PackCommandEntry declares a CLI subcommand provided by a pack.
+// Pack commands appear as gc <pack-name> <command-name> and let packs
+// ship operational tooling alongside orchestration config.
+type PackCommandEntry struct {
+	// Name is the subcommand name (e.g. "status", "audit").
+	Name string `toml:"name" jsonschema:"required"`
+	// Description is a short one-line description shown in help listings.
+	Description string `toml:"description" jsonschema:"required"`
+	// LongDescription is a path (relative to pack dir) to a text file
+	// with the full help text shown by gc <pack> <command> --help.
+	LongDescription string `toml:"long_description" jsonschema:"required"`
+	// Script is the path to the script (relative to pack dir).
+	// Supports Go text/template variables: {{.CityRoot}}, {{.ConfigDir}}, etc.
+	Script string `toml:"script" jsonschema:"required"`
+}
+
 // EffectivePrefix returns the bead ID prefix for this rig. Uses the
 // explicit Prefix if set, otherwise derives one from the Name.
 func (r *Rig) EffectivePrefix() string {

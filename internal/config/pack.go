@@ -27,6 +27,7 @@ type packConfig struct {
 	Formulas  FormulasConfig          `toml:"formulas,omitempty"`
 	Patches   Patches                 `toml:"patches,omitempty"`
 	Doctor    []PackDoctorEntry       `toml:"doctor,omitempty"`
+	Commands  []PackCommandEntry      `toml:"commands,omitempty"`
 }
 
 // ExpandPacks resolves pack references on all rigs. For each rig
@@ -1017,6 +1018,57 @@ func LoadPackDoctorEntries(fs fsys.FS, topoDirs []string) []PackDoctorInfo {
 				PackName: tc.Pack.Name,
 				Entry:    entry,
 				TopoDir:  dir,
+			})
+		}
+	}
+
+	return result
+}
+
+// PackCommandInfo pairs a command entry with its resolved context.
+type PackCommandInfo struct {
+	// PackName is the pack's [pack] name.
+	PackName string
+	// Entry is the parsed [[commands]] entry.
+	Entry PackCommandEntry
+	// PackDir is the absolute pack directory (for resolving script paths).
+	PackDir string
+}
+
+// LoadPackCommandEntries reads pack.toml files from each pack directory,
+// extracts [[commands]] entries, and returns them with resolved context.
+// Directories are deduplicated by absolute path. Errors in individual
+// packs are silently skipped (best-effort, same as LoadPackDoctorEntries).
+func LoadPackCommandEntries(fs fsys.FS, packDirs []string) []PackCommandInfo {
+	seen := make(map[string]bool)
+	var result []PackCommandInfo
+
+	for _, dir := range packDirs {
+		absDir, err := filepath.Abs(dir)
+		if err != nil {
+			absDir = dir
+		}
+		if seen[absDir] {
+			continue
+		}
+		seen[absDir] = true
+
+		tomlPath := filepath.Join(dir, packFile)
+		data, err := fs.ReadFile(tomlPath)
+		if err != nil {
+			continue
+		}
+
+		var tc packConfig
+		if _, err := toml.Decode(string(data), &tc); err != nil {
+			continue
+		}
+
+		for _, entry := range tc.Commands {
+			result = append(result, PackCommandInfo{
+				PackName: tc.Pack.Name,
+				Entry:    entry,
+				PackDir:  dir,
 			})
 		}
 	}

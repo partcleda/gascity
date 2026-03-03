@@ -76,6 +76,11 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 			if len(args) == 0 {
 				return cmd.Help()
 			}
+			// Lazy fallback: if eager discovery missed a pack command
+			// (e.g. config changed after binary started), try one more time.
+			if tryPackCommandFallback(args, stdout, stderr) {
+				return nil
+			}
 			fmt.Fprintf(stderr, "gc: unknown command %q\n", args[0]) //nolint:errcheck // best-effort stderr
 			return errExit
 		},
@@ -114,6 +119,10 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 	)
 	// gen-doc needs the root command to walk the tree; add after construction.
 	root.AddCommand(newGenDocCmd(stdout, stderr, root))
+
+	// Best-effort: discover pack CLI commands if we're inside a city.
+	registerPackCommands(root, stdout, stderr)
+
 	return root
 }
 
