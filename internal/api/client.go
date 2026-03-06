@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -45,22 +46,22 @@ func (c *Client) patchCity(suspend bool) error {
 
 // SuspendAgent suspends an agent via POST /v0/agent/{name}/suspend.
 func (c *Client) SuspendAgent(name string) error {
-	return c.doMutation("POST", "/v0/agent/"+name+"/suspend", nil)
+	return c.doMutation("POST", "/v0/agent/"+url.PathEscape(name)+"/suspend", nil)
 }
 
 // ResumeAgent resumes an agent via POST /v0/agent/{name}/resume.
 func (c *Client) ResumeAgent(name string) error {
-	return c.doMutation("POST", "/v0/agent/"+name+"/resume", nil)
+	return c.doMutation("POST", "/v0/agent/"+url.PathEscape(name)+"/resume", nil)
 }
 
 // SuspendRig suspends a rig via POST /v0/rig/{name}/suspend.
 func (c *Client) SuspendRig(name string) error {
-	return c.doMutation("POST", "/v0/rig/"+name+"/suspend", nil)
+	return c.doMutation("POST", "/v0/rig/"+url.PathEscape(name)+"/suspend", nil)
 }
 
 // ResumeRig resumes a rig via POST /v0/rig/{name}/resume.
 func (c *Client) ResumeRig(name string) error {
-	return c.doMutation("POST", "/v0/rig/"+name+"/resume", nil)
+	return c.doMutation("POST", "/v0/rig/"+url.PathEscape(name)+"/resume", nil)
 }
 
 // doMutation sends a mutation request and checks for errors.

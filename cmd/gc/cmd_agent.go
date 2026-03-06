@@ -469,7 +469,8 @@ func cmdAgentSuspend(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if c := apiClient(cityPath); c != nil {
-		if err := c.SuspendAgent(args[0]); err != nil {
+		qname := resolveAgentForAPI(cityPath, args[0])
+		if err := c.SuspendAgent(qname); err != nil {
 			fmt.Fprintf(stderr, "gc agent suspend: %v\n", err) //nolint:errcheck // best-effort stderr
 			return 1
 		}
@@ -564,7 +565,8 @@ func cmdAgentResume(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if c := apiClient(cityPath); c != nil {
-		if err := c.ResumeAgent(args[0]); err != nil {
+		qname := resolveAgentForAPI(cityPath, args[0])
+		if err := c.ResumeAgent(qname); err != nil {
 			fmt.Fprintf(stderr, "gc agent resume: %v\n", err) //nolint:errcheck // best-effort stderr
 			return 1
 		}
