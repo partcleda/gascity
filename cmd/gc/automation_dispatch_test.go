@@ -919,6 +919,120 @@ func (r *memRecorder) hasSubject(subject string) bool {
 	return false
 }
 
+// --- dedup / tracking bead lifecycle tests ---
+
+func TestAutomationDispatchClosesTrackingBead(t *testing.T) {
+	store := beads.NewMemStore()
+	var rec memRecorder
+
+	fakeExec := func(_ context.Context, _, _ string, _ []string) ([]byte, error) {
+		return []byte("ok\n"), nil
+	}
+
+	aa := []automations.Automation{{
+		Name:     "health-check",
+		Gate:     "cooldown",
+		Interval: "1m",
+		Exec:     "scripts/health.sh",
+	}}
+	ad := buildAutomationDispatcherFromListExec(aa, store, nil, noopRunner, fakeExec, &rec)
+
+	ad.dispatch(context.Background(), t.TempDir(), time.Now())
+	time.Sleep(100 * time.Millisecond)
+
+	// Tracking bead should be closed after dispatch completes.
+	all, _ := store.List()
+	for _, b := range all {
+		for _, l := range b.Labels {
+			if l == "automation-run:health-check" {
+				if b.Status != "closed" {
+					t.Errorf("tracking bead status = %q, want %q", b.Status, "closed")
+				}
+				return
+			}
+		}
+	}
+	t.Error("tracking bead not found")
+}
+
+func TestAutomationDispatchSkipsOpenWork(t *testing.T) {
+	store := beads.NewMemStore()
+
+	// Seed an open wisp (non-tracking bead) for this automation.
+	_, err := store.Create(beads.Bead{
+		Title:  "mol-do-work", // not "automation:my-auto" → counts as real work
+		Labels: []string{"automation-run:my-auto"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ran := false
+	fakeExec := func(_ context.Context, _, _ string, _ []string) ([]byte, error) {
+		ran = true
+		return nil, nil
+	}
+
+	aa := []automations.Automation{{
+		Name:     "my-auto",
+		Gate:     "cooldown",
+		Interval: "1s", // short cooldown — would fire if not deduped
+		Exec:     "scripts/run.sh",
+	}}
+	ad := buildAutomationDispatcherFromListExec(aa, store, nil, noopRunner, fakeExec, nil)
+
+	ad.dispatch(context.Background(), t.TempDir(), time.Now())
+	time.Sleep(50 * time.Millisecond)
+
+	if ran {
+		t.Error("exec should not have run — open work exists")
+	}
+
+	// No new beads should have been created (only the seed).
+	all, _ := store.List()
+	if len(all) != 1 {
+		t.Errorf("expected 1 bead (seed only), got %d", len(all))
+	}
+}
+
+func TestAutomationDispatchFiresAfterWorkClosed(t *testing.T) {
+	store := beads.NewMemStore()
+
+	// Seed a CLOSED wisp — should not block new dispatch.
+	b, err := store.Create(beads.Bead{
+		Title:  "mol-do-work",
+		Labels: []string{"automation-run:my-auto"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(b.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	ran := false
+	fakeExec := func(_ context.Context, _, _ string, _ []string) ([]byte, error) {
+		ran = true
+		return nil, nil
+	}
+
+	aa := []automations.Automation{{
+		Name:     "my-auto",
+		Gate:     "cooldown",
+		Interval: "1s",
+		Exec:     "scripts/run.sh",
+	}}
+	ad := buildAutomationDispatcherFromListExec(aa, store, nil, noopRunner, fakeExec, nil)
+
+	// Use a future "now" so cooldown gate sees the seed bead as old enough.
+	ad.dispatch(context.Background(), t.TempDir(), time.Now().Add(5*time.Second))
+	time.Sleep(100 * time.Millisecond)
+
+	if !ran {
+		t.Error("exec should have run — all previous work is closed")
+	}
+}
+
 // Unused but keep for future event assertion tests.
 var (
 	_ = (*memRecorder).hasSubject

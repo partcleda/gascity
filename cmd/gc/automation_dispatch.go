@@ -135,9 +135,14 @@ func (m *memoryAutomationDispatcher) dispatch(ctx context.Context, cityPath stri
 			continue
 		}
 
+		// Skip dispatch if previous work hasn't been processed yet.
+		scoped := a.ScopedName()
+		if m.hasOpenWork(scoped) {
+			continue
+		}
+
 		// Create tracking bead synchronously BEFORE dispatch goroutine.
 		// This prevents the cooldown gate from re-firing on the next tick.
-		scoped := a.ScopedName()
 		trackingBead, err := m.store.Create(beads.Bead{
 			Title:  "automation:" + scoped,
 			Labels: []string{"automation-run:" + scoped},
@@ -157,6 +162,8 @@ func (m *memoryAutomationDispatcher) dispatch(ctx context.Context, cityPath stri
 // For exec automations, runs the script directly. For formula automations,
 // instantiates a wisp. Emits events and updates the tracking bead.
 func (m *memoryAutomationDispatcher) dispatchOne(ctx context.Context, a automations.Automation, cityPath, trackingID string) {
+	defer m.store.Close(trackingID) //nolint:errcheck // best-effort close
+
 	timeout := effectiveTimeout(a, m.maxTimeout)
 	childCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -270,6 +277,24 @@ func (m *memoryAutomationDispatcher) dispatchWisp(ctx context.Context, a automat
 
 	// Label tracking bead with outcome.
 	m.store.Update(trackingID, beads.UpdateOpts{Labels: []string{"wisp"}}) //nolint:errcheck // best-effort
+}
+
+// hasOpenWork reports whether any non-closed work bead exists for this
+// automation. Tracking beads (title "automation:<name>") are excluded —
+// only actual work (wisps, exec results) counts. Returns false on error
+// (fail open: allow dispatch rather than block).
+func (m *memoryAutomationDispatcher) hasOpenWork(scopedName string) bool {
+	results, err := m.store.ListByLabel("automation-run:"+scopedName, 0)
+	if err != nil {
+		return false
+	}
+	trackingTitle := "automation:" + scopedName
+	for _, b := range results {
+		if b.Status != "closed" && b.Title != trackingTitle {
+			return true
+		}
+	}
+	return false
 }
 
 // effectiveTimeout returns the timeout to use for an automation dispatch.
