@@ -22,7 +22,8 @@ func autoSuspendChatSessions(store beads.Store, sp session.Provider, idleTimeout
 
 	sessions, err := mgr.List("active", "")
 	if err != nil {
-		return // best-effort
+		fmt.Fprintf(stderr, "gc start: auto-suspend list: %v\n", err) //nolint:errcheck // best-effort stderr
+		return
 	}
 
 	now := time.Now()

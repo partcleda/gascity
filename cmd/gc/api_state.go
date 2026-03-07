@@ -141,7 +141,10 @@ func (cs *controllerState) update(cfg *config.City, sp session.Provider) {
 	// Build new stores outside the lock (may do file I/O / subprocess spawns).
 	stores, provs := cs.buildStores(cfg)
 	// Reopen city-level store for session beads.
-	cityStore, _ := openCityStoreAt(cs.cityPath)
+	cityStore, err := openCityStoreAt(cs.cityPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "api: city bead store reload: %v\n", err) //nolint:errcheck // best-effort stderr
+	}
 
 	// Swap under short critical section.
 	cs.mu.Lock()

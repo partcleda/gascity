@@ -337,6 +337,17 @@ func controllerLoop(
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	// Open standalone city bead store for auto-suspend when API is disabled.
+	// When API is enabled, controllerState manages the store.
+	var standaloneCityStore beads.Store
+	if cs == nil {
+		if store, err := openCityStoreAt(cityRoot); err != nil {
+			fmt.Fprintf(stderr, "gc start: city bead store: %v (auto-suspend disabled)\n", err) //nolint:errcheck // best-effort stderr
+		} else {
+			standaloneCityStore = store
+		}
+	}
+
 	// Track pool instance liveness for death detection.
 	// nil on first tick — on_boot already handled startup orphans.
 	var prevPoolRunning map[string]bool
@@ -499,8 +510,14 @@ func controllerLoop(
 				ad.dispatch(ctx, filepath.Dir(tomlPath), time.Now())
 			}
 			// Chat session auto-suspend: suspend detached idle sessions.
-			if idleTimeout := cfg.ChatSessions.IdleTimeoutDuration(); idleTimeout > 0 && cs != nil {
-				autoSuspendChatSessions(cs.CityBeadStore(), sp, idleTimeout, stdout, stderr)
+			if idleTimeout := cfg.ChatSessions.IdleTimeoutDuration(); idleTimeout > 0 {
+				var store beads.Store
+				if cs != nil {
+					store = cs.CityBeadStore()
+				} else {
+					store = standaloneCityStore
+				}
+				autoSuspendChatSessions(store, sp, idleTimeout, stdout, stderr)
 			}
 		case <-ctx.Done():
 			return
