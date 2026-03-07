@@ -414,6 +414,19 @@ func reconcileCities(
 		fmt.Fprintf(stdout, "City '%s' stopped.\n", name) //nolint:errcheck
 	}
 
+	// Clear panicHistory for any path that was in panicHistory but is
+	// no longer in the desired set. This handles the case where a city
+	// panicked (self-removed from cities + recorded backoff) and was
+	// then unregistered — without this, re-registering the fixed city
+	// would inherit the old backoff.
+	mu.Lock()
+	for path := range panicHistory {
+		if _, ok := desired[path]; !ok {
+			delete(panicHistory, path)
+		}
+	}
+	mu.Unlock()
+
 	// Start new cities. Build list of cities to start under lock, then
 	// release lock for I/O-heavy initialization (config loading, bead
 	// lifecycle, formula materialization, etc.).
@@ -690,107 +703,13 @@ func effectiveProviderName(configured string) string {
 }
 
 // supervisorBuildAgentsFn returns a buildFn suitable for CityRuntimeParams.
-// This mirrors the buildAgents closure in cmd_start.go, including dynamic
-// pool evaluation via scale_check commands.
+// It delegates to buildAgentsFromConfig with a stable beacon timestamp
+// and no multi-instance registry (multi agents are not yet supported
+// in supervisor mode).
 func supervisorBuildAgentsFn(cityPath, cityName string, stderr io.Writer) func(*config.City, session.Provider) []agent.Agent {
+	beaconTime := time.Now()
 	return func(c *config.City, sp session.Provider) []agent.Agent {
-		if c.Workspace.Suspended {
-			return nil
-		}
-		bp := newAgentBuildParams(cityName, cityPath, c, sp, time.Now(), stderr)
-
-		// Pre-compute suspended rig paths.
-		suspendedRigPaths := make(map[string]bool)
-		for _, r := range c.Rigs {
-			if r.Suspended {
-				suspendedRigPaths[filepath.Clean(r.Path)] = true
-			}
-		}
-
-		type poolEvalWork struct {
-			agentIdx int
-			pool     config.PoolConfig
-			poolDir  string
-		}
-
-		var agents []agent.Agent
-		var pendingPools []poolEvalWork
-		for i := range c.Agents {
-			a := &c.Agents[i]
-			if a.Suspended {
-				continue
-			}
-			pool := a.EffectivePool()
-			if pool.Max == 0 {
-				continue
-			}
-
-			// Check rig suspension.
-			if a.Dir != "" {
-				if wd, wdErr := resolveAgentDir(cityPath, a.Dir); wdErr == nil {
-					if suspendedRigPaths[filepath.Clean(wd)] {
-						continue
-					}
-				}
-			}
-
-			if pool.IsMultiInstance() {
-				// Pool agent — collect for parallel scale_check evaluation.
-				poolDir := cityPath
-				if a.Dir != "" {
-					if pd, pdErr := resolveAgentDir(cityPath, a.Dir); pdErr == nil {
-						poolDir = pd
-					}
-				}
-				pendingPools = append(pendingPools, poolEvalWork{agentIdx: i, pool: pool, poolDir: poolDir})
-				continue
-			}
-
-			qualifiedName := a.QualifiedName()
-			fpExtra := buildFingerprintExtra(a)
-			built, err := buildOneAgent(bp, a, qualifiedName, fpExtra)
-			if err != nil {
-				fmt.Fprintf(stderr, "gc supervisor: agent %q: %v (skipping)\n", qualifiedName, err) //nolint:errcheck
-				continue
-			}
-			agents = append(agents, built)
-		}
-
-		// Evaluate pool scale_check commands in parallel.
-		type poolEvalResult struct {
-			desired int
-			err     error
-		}
-		evalResults := make([]poolEvalResult, len(pendingPools))
-		var wg sync.WaitGroup
-		for j, pw := range pendingPools {
-			wg.Add(1)
-			go func(idx int, name string, pool config.PoolConfig, dir string) {
-				defer wg.Done()
-				desired, err := evaluatePool(name, pool, dir, shellScaleCheck)
-				evalResults[idx] = poolEvalResult{desired: desired, err: err}
-			}(j, c.Agents[pw.agentIdx].Name, pw.pool, pw.poolDir)
-		}
-		wg.Wait()
-
-		for j, pw := range pendingPools {
-			pr := evalResults[j]
-			if pr.err != nil {
-				fmt.Fprintf(stderr, "gc supervisor: %v (using min=%d)\n", pr.err, pw.pool.Min) //nolint:errcheck
-			}
-			running := countRunningPoolInstances(c.Agents[pw.agentIdx].Name, c.Agents[pw.agentIdx].Dir, pw.pool, cityName, c.Workspace.SessionTemplate, sp)
-			if pr.desired != running {
-				fmt.Fprintf(stderr, "gc supervisor: pool '%s': check returned %d, %d running → scaling %s\n", //nolint:errcheck
-					c.Agents[pw.agentIdx].Name, pr.desired, running, scaleDirection(running, pr.desired))
-			}
-			pa, err := poolAgents(bp, &c.Agents[pw.agentIdx], pr.desired)
-			if err != nil {
-				fmt.Fprintf(stderr, "gc supervisor: pool %q: %v (skipping)\n", c.Agents[pw.agentIdx].QualifiedName(), err) //nolint:errcheck
-				continue
-			}
-			agents = append(agents, pa...)
-		}
-		return agents
+		return buildAgentsFromConfig(cityName, cityPath, beaconTime, c, sp, nil, "gc supervisor", stderr)
 	}
 }
 

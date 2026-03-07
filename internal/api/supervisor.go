@@ -147,6 +147,10 @@ func (sm *SupervisorMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (sm *SupervisorMux) serveCityRequest(w http.ResponseWriter, r *http.Request, cityName, path string) {
 	state := sm.resolver.CityState(cityName)
 	if state == nil {
+		// Evict stale cache entry if the city is gone.
+		sm.cacheMu.Lock()
+		delete(sm.cache, cityName)
+		sm.cacheMu.Unlock()
 		writeError(w, http.StatusNotFound, "not_found", "city not found or not running: "+cityName)
 		return
 	}
