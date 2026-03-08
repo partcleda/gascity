@@ -106,3 +106,51 @@ func TestConfigHash_DifferentPrompts(t *testing.T) {
 		t.Error("different prompts should produce different hashes")
 	}
 }
+
+func TestConfigHash_BeaconTimeStability(t *testing.T) {
+	// Two prompts with different beacon timestamps but same content
+	// should produce the same hash.
+	prompt := "You are a helpful agent.\n\nDo your work."
+	p1 := TemplateParams{
+		Command: "claude",
+		Prompt:  "[bright-lights] worker \u2022 2026-03-08T10:00:00\n\n" + prompt,
+	}
+	p2 := TemplateParams{
+		Command: "claude",
+		Prompt:  "[bright-lights] worker \u2022 2026-03-08T11:30:00\n\n" + prompt,
+	}
+
+	h1 := canonicalConfigHash(p1, nil)
+	h2 := canonicalConfigHash(p2, nil)
+	if h1 != h2 {
+		t.Errorf("beacon time change should not affect hash: %q vs %q", h1, h2)
+	}
+
+	// Hash should match a prompt without any beacon at all.
+	p3 := TemplateParams{
+		Command: "claude",
+		Prompt:  prompt,
+	}
+	h3 := canonicalConfigHash(p3, nil)
+	if h1 != h3 {
+		t.Errorf("beacon-stripped hash should match no-beacon hash: %q vs %q", h1, h3)
+	}
+}
+
+func TestStripBeaconPrefix(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"with beacon", "[city] agent \u2022 2026-01-01T00:00:00\n\nreal prompt", "real prompt"},
+		{"no beacon", "plain prompt text", "plain prompt text"},
+		{"empty", "", ""},
+		{"bracket but no newline", "[city] agent", "[city] agent"},
+	}
+	for _, tt := range tests {
+		if got := stripBeaconPrefix(tt.input); got != tt.want {
+			t.Errorf("%s: stripBeaconPrefix() = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}

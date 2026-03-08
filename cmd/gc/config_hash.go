@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // canonicalConfigHash computes a SHA-256 hash over the behavioral fields of
@@ -35,15 +36,18 @@ func canonicalConfigHash(params TemplateParams, overlay map[string]string) strin
 	h.Write([]byte(command)) //nolint:errcheck
 	h.Write([]byte{0})       //nolint:errcheck
 
-	// Prompt — hash the content, not the raw text (avoids beacon time drift).
-	// If overlay has prompt, use it; otherwise use resolved prompt.
+	// Prompt — strip the beacon prefix before hashing. resolveTemplate
+	// prepends a time-stamped beacon line ("[city] agent • timestamp\n\n...").
+	// The beacon changes every tick; hashing it would cause false drift.
+	// Overlay prompts don't have beacons, so no stripping needed.
 	prompt := params.Prompt
 	if v, ok := overlay["prompt"]; ok {
 		prompt = v
+	} else {
+		prompt = stripBeaconPrefix(prompt)
 	}
-	promptHash := sha256.Sum256([]byte(prompt))
-	h.Write(promptHash[:]) //nolint:errcheck
-	h.Write([]byte{0})     //nolint:errcheck
+	h.Write([]byte(prompt)) //nolint:errcheck
+	h.Write([]byte{0})      //nolint:errcheck
 
 	// Environment — merge params.Env with overlay env entries (overlay.env.KEY).
 	env := make(map[string]string, len(params.Env))
@@ -118,6 +122,19 @@ func canonicalConfigHash(params TemplateParams, overlay map[string]string) strin
 		return sum[:16]
 	}
 	return sum
+}
+
+// stripBeaconPrefix removes the time-stamped beacon line from a prompt.
+// The beacon format is "[city] agent • timestamp\n\n<prompt body>".
+// If no beacon is detected, the prompt is returned unchanged.
+func stripBeaconPrefix(prompt string) string {
+	if !strings.HasPrefix(prompt, "[") {
+		return prompt
+	}
+	if idx := strings.Index(prompt, "\n\n"); idx >= 0 {
+		return prompt[idx+2:]
+	}
+	return prompt
 }
 
 // hashSortedStringMap writes map entries to h in deterministic sorted order.
