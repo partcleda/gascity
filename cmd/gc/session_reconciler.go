@@ -167,6 +167,12 @@ func reconcileSessionBeads(
 			// Heal state using provider liveness, not agent membership.
 			healState(session, providerAlive, store)
 			if providerAlive {
+				// Use defaultDrainTimeout (not driftDrainTimeout) for orphan/
+				// suspended drains. driftDrainTimeout is for config-drift only
+				// — it controls how long an agent gets to finish work before
+				// being restarted with new config. Orphan/suspended drains are
+				// lifecycle operations (agent removed/disabled) where the
+				// standard timeout applies.
 				reason := "orphaned"
 				if configuredNames[name] {
 					reason = "suspended"
@@ -200,13 +206,22 @@ func reconcileSessionBeads(
 		}
 
 		// Config drift: if alive and config changed, drain for restart.
+		// Live-only drift: re-apply session_live without restart.
 		if alive {
 			template := session.Metadata["template"]
+			// Use config_hash (set by new reconciler) with fallback to
+			// started_config_hash (set by legacy beadReconcileOps). This
+			// ensures correct drift detection when toggling bead_reconciler
+			// from false→true on a running city.
 			storedHash := session.Metadata["config_hash"]
+			if sh := session.Metadata["started_config_hash"]; sh != "" {
+				storedHash = sh
+			}
 			if template != "" && storedHash != "" {
 				cfgAgent := findAgentByTemplate(cfg, template)
 				if cfgAgent != nil {
-					currentHash := runtime.CoreFingerprint(a.SessionConfig())
+					agentCfg := a.SessionConfig()
+					currentHash := runtime.CoreFingerprint(agentCfg)
 					if storedHash != currentHash {
 						ddt := driftDrainTimeout
 						if ddt <= 0 {
@@ -221,6 +236,31 @@ func reconcileSessionBeads(
 							Message: "config drift detected",
 						})
 						continue
+					}
+
+					// Core config matches — check live-only drift.
+					// Live-only changes (e.g., session_live template updates)
+					// can be re-applied without draining/restarting.
+					storedLive := session.Metadata["live_hash"]
+					if sl := session.Metadata["started_live_hash"]; sl != "" {
+						storedLive = sl
+					}
+					if storedLive != "" {
+						currentLive := runtime.LiveFingerprint(agentCfg)
+						if storedLive != currentLive {
+							fmt.Fprintf(stdout, "Live config changed for '%s', re-applying...\n", a.Name()) //nolint:errcheck
+							_ = sp.RunLive(name, agentCfg)
+							_ = store.SetMetadataBatch(session.ID, map[string]string{
+								"live_hash":         currentLive,
+								"started_live_hash": currentLive,
+							})
+							rec.Record(events.Event{
+								Type:    events.AgentUpdated,
+								Actor:   "gc",
+								Subject: a.Name(),
+								Message: "session_live re-applied",
+							})
+						}
 					}
 				}
 			}
@@ -274,11 +314,19 @@ func reconcileSessionBeads(
 			})
 
 			// Store config fingerprint after successful start.
+			// Write both config_hash and started_config_hash for
+			// bidirectional compatibility with the legacy reconciler.
 			agentCfg := a.SessionConfig()
-			_ = store.SetMetadataBatch(session.ID, map[string]string{
-				"config_hash": runtime.CoreFingerprint(agentCfg),
-				"live_hash":   runtime.LiveFingerprint(agentCfg),
-			})
+			coreHash := runtime.CoreFingerprint(agentCfg)
+			liveHash := runtime.LiveFingerprint(agentCfg)
+			if err := store.SetMetadataBatch(session.ID, map[string]string{
+				"config_hash":         coreHash,
+				"started_config_hash": coreHash,
+				"live_hash":           liveHash,
+				"started_live_hash":   liveHash,
+			}); err != nil {
+				fmt.Fprintf(stderr, "session reconciler: storing hashes for %s: %v\n", name, err) //nolint:errcheck
+			}
 		}
 
 		if shouldWake && alive {

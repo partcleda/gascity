@@ -625,6 +625,68 @@ func TestReconcileSessionBeads_CancelsDrainOnWakeReason(t *testing.T) {
 	}
 }
 
+func TestReconcileSessionBeads_PoolExcessDrainsAliveSession(t *testing.T) {
+	env := newReconcilerTestEnv()
+	env.cfg = &config.City{
+		Agents: []config.Agent{
+			{Name: "worker", Pool: &config.PoolConfig{Min: 1, Max: 5}},
+		},
+	}
+	// Two pool instances alive, but desired count is 1.
+	env.addAgent("worker-1", true)
+	env.addAgent("worker-2", true)
+	s1 := env.createSessionBead("worker-1", "worker")
+	s2 := env.createSessionBead("worker-2", "worker")
+
+	// Pool desired = 1 (only 1 agent in desired set).
+	poolDesired := map[string]int{"worker": 1}
+	cfgNames := configuredSessionNames(env.cfg, "")
+
+	reconcileSessionBeads(
+		context.Background(), []beads.Bead{s1, s2}, env.agentIndex, cfgNames,
+		env.cfg, env.sp, env.store, env.dt, poolDesired, "",
+		env.clk, env.rec, 0, 0, &env.stdout, &env.stderr,
+	)
+
+	// At least one session should be draining due to pool excess.
+	d1 := env.dt.get(s1.ID)
+	d2 := env.dt.get(s2.ID)
+	drainCount := 0
+	if d1 != nil {
+		drainCount++
+	}
+	if d2 != nil {
+		drainCount++
+	}
+	if drainCount == 0 {
+		t.Error("expected at least one pool-excess drain")
+	}
+}
+
+func TestReconcileSessionBeads_LiveDriftReapplied(t *testing.T) {
+	env := newReconcilerTestEnv()
+	env.cfg = &config.City{Agents: []config.Agent{{Name: "worker"}}}
+	a := env.addAgent("worker", true)
+	// Same core config, different live config.
+	a.FakeSessionConfig = runtime.Config{
+		Command:     "test-cmd",
+		SessionLive: []string{"echo live-updated"},
+	}
+	session := env.createSessionBead("worker", "worker")
+
+	env.reconcile([]beads.Bead{session})
+
+	// Should NOT drain (core hash matches), but live_hash should be updated.
+	if ds := env.dt.get(session.ID); ds != nil {
+		t.Errorf("expected no drain for live-only drift, got reason=%q", ds.reason)
+	}
+	b, _ := env.store.Get(session.ID)
+	expectedLive := runtime.LiveFingerprint(a.FakeSessionConfig)
+	if b.Metadata["live_hash"] != expectedLive {
+		t.Errorf("live_hash not updated: got %q, want %q", b.Metadata["live_hash"], expectedLive)
+	}
+}
+
 func TestAllDependenciesAlive_WithSessionTemplate(t *testing.T) {
 	// Verify that SessionTemplate is used consistently in session name
 	// computation for dependency lookups.
