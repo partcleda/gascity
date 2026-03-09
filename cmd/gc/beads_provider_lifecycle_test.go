@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/gastownhall/gascity/internal/config"
 )
 
 // TestEnsureBeadsProvider_file verifies that file provider is a no-op.
@@ -152,6 +154,49 @@ func TestRunProviderOp_setsGCCityPath(t *testing.T) {
 	}
 	if err := runProviderOp(script, dir, "health"); err != nil {
 		t.Fatalf("expected GC_CITY_PATH to be set, got %v", err)
+	}
+}
+
+// TestStartBeadsLifecycle_InstallsAgentHooks verifies that startBeadsLifecycle
+// installs agent hooks for both the city and all rigs.
+func TestStartBeadsLifecycle_InstallsAgentHooks(t *testing.T) {
+	t.Setenv("GC_BEADS", "file")
+	t.Setenv("GC_DOLT", "skip")
+
+	cityPath := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cityPath, ".gc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	rigPath := filepath.Join(t.TempDir(), "my-rig")
+	if err := os.MkdirAll(rigPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.City{
+		Workspace: config.Workspace{
+			Name:              "test-city",
+			InstallAgentHooks: []string{"gemini"},
+		},
+		Rigs: []config.Rig{
+			{Name: "my-rig", Path: rigPath},
+		},
+	}
+
+	if err := startBeadsLifecycle(cityPath, "test-city", cfg, nil); err != nil {
+		t.Fatalf("startBeadsLifecycle: %v", err)
+	}
+
+	// Verify gemini hooks installed in city dir.
+	cityHook := filepath.Join(cityPath, ".gemini", "settings.json")
+	if _, err := os.Stat(cityHook); err != nil {
+		t.Errorf("city gemini hook not created: %v", err)
+	}
+
+	// Verify gemini hooks installed in rig dir.
+	rigHook := filepath.Join(rigPath, ".gemini", "settings.json")
+	if _, err := os.Stat(rigHook); err != nil {
+		t.Errorf("rig gemini hook not created: %v", err)
 	}
 }
 

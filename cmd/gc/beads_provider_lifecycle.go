@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/gastownhall/gascity/internal/config"
+	"github.com/gastownhall/gascity/internal/fsys"
+	"github.com/gastownhall/gascity/internal/hooks"
 )
 
 // ── Consolidated lifecycle operations ────────────────────────────────────
@@ -50,6 +52,14 @@ func startBeadsLifecycle(cityPath, cityName string, cfg *config.City, _ io.Write
 		prefix := cfg.Rigs[i].EffectivePrefix()
 		if err := initAndHookDir(cityPath, cfg.Rigs[i].Path, prefix); err != nil {
 			return fmt.Errorf("init rig %q beads: %w", cfg.Rigs[i].Name, err)
+		}
+	}
+	// Install agent hooks (Claude, Gemini, etc.) for city and all rigs.
+	// Idempotent — safe to run on every start.
+	if ih := cfg.Workspace.InstallAgentHooks; len(ih) > 0 {
+		_ = hooks.Install(fsys.OSFS{}, cityPath, cityPath, ih)
+		for i := range cfg.Rigs {
+			_ = hooks.Install(fsys.OSFS{}, cityPath, cfg.Rigs[i].Path, ih)
 		}
 	}
 	// Regenerate routes for cross-rig routing.

@@ -144,11 +144,17 @@ func doRigAdd(fs fsys.FS, cityPath, rigPath, include string, startSuspended bool
 		return 1
 	}
 
-	// Check for duplicate rig name.
+	// Check for existing rig with same name.
+	var reAdd bool
 	for _, r := range cfg.Rigs {
 		if r.Name == name {
-			fmt.Fprintf(stderr, "gc rig add: rig %q already registered\n", name) //nolint:errcheck // best-effort stderr
-			return 1
+			if filepath.Clean(r.Path) != filepath.Clean(rigPath) {
+				fmt.Fprintf(stderr, "gc rig add: rig %q already registered at %s (not %s)\n", //nolint:errcheck // best-effort stderr
+					name, r.Path, rigPath)
+				return 1
+			}
+			reAdd = true
+			break
 		}
 	}
 
@@ -158,7 +164,11 @@ func doRigAdd(fs fsys.FS, cityPath, rigPath, include string, startSuspended bool
 	// --- Phase 1: Infrastructure (all fallible, before touching city.toml) ---
 
 	w := func(s string) { fmt.Fprintln(stdout, s) } //nolint:errcheck // best-effort stdout
-	w(fmt.Sprintf("Adding rig '%s'...", name))
+	if reAdd {
+		w(fmt.Sprintf("Re-initializing rig '%s'...", name))
+	} else {
+		w(fmt.Sprintf("Adding rig '%s'...", name))
+	}
 	if hasGit {
 		w(fmt.Sprintf("  Detected git repo at %s", rigPath))
 	}
@@ -189,57 +199,60 @@ func doRigAdd(fs fsys.FS, cityPath, rigPath, include string, startSuspended bool
 	}
 
 	// --- Phase 2: Commit config (only after infrastructure succeeds) ---
+	// Skipped for re-adds (config already has this rig).
 
-	// Add rig to config and validate before writing.
-	rig := config.Rig{
-		Name:      name,
-		Path:      rigPath,
-		Suspended: startSuspended,
-	}
-	if include != "" {
-		rig.Includes = []string{include}
-	}
-	cfg.Rigs = append(cfg.Rigs, rig)
-	cityName := cfg.Workspace.Name
-	if cityName == "" {
-		cityName = filepath.Base(cityPath)
-	}
-	if err := config.ValidateRigs(cfg.Rigs, cityName); err != nil {
-		fmt.Fprintf(stderr, "gc rig add: %v\n", err) //nolint:errcheck // best-effort stderr
-		return 1
-	}
+	if !reAdd {
+		// Add rig to config and validate before writing.
+		rig := config.Rig{
+			Name:      name,
+			Path:      rigPath,
+			Suspended: startSuspended,
+		}
+		if include != "" {
+			rig.Includes = []string{include}
+		}
+		cfg.Rigs = append(cfg.Rigs, rig)
+		cityName := cfg.Workspace.Name
+		if cityName == "" {
+			cityName = filepath.Base(cityPath)
+		}
+		if err := config.ValidateRigs(cfg.Rigs, cityName); err != nil {
+			fmt.Fprintf(stderr, "gc rig add: %v\n", err) //nolint:errcheck // best-effort stderr
+			return 1
+		}
 
-	// Add default polecat pool unless the pack already provides one.
-	packHasPolecat := false
-	if include != "" {
-		packHasPolecat = config.PackDefinesAgent(fs, include, cityPath, "polecat")
-	}
-	if !packHasPolecat {
-		cfg.Agents = append(cfg.Agents, config.Agent{
-			Name: "polecat",
-			Dir:  name,
-			Pool: &config.PoolConfig{Min: 0, Max: -1},
-		})
-		w("  Default polecat pool added (min=0, max=unlimited)")
-	} else {
-		w(fmt.Sprintf("  Default polecat pool provided by pack %s", include))
-	}
+		// Add default polecat pool unless the pack already provides one.
+		packHasPolecat := false
+		if include != "" {
+			packHasPolecat = config.PackDefinesAgent(fs, include, cityPath, "polecat")
+		}
+		if !packHasPolecat {
+			cfg.Agents = append(cfg.Agents, config.Agent{
+				Name: "polecat",
+				Dir:  name,
+				Pool: &config.PoolConfig{Min: 0, Max: -1},
+			})
+			w("  Default polecat pool added (min=0, max=unlimited)")
+		} else {
+			w(fmt.Sprintf("  Default polecat pool provided by pack %s", include))
+		}
 
-	data, err := cfg.Marshal()
-	if err != nil {
-		fmt.Fprintf(stderr, "gc rig add: marshaling config: %v\n", err) //nolint:errcheck // best-effort stderr
-		return 1
-	}
+		data, err := cfg.Marshal()
+		if err != nil {
+			fmt.Fprintf(stderr, "gc rig add: marshaling config: %v\n", err) //nolint:errcheck // best-effort stderr
+			return 1
+		}
 
-	// If the pack provides a polecat, append a comment to make the decision visible.
-	if packHasPolecat {
-		data = append(data, []byte(
-			"\n# Default polecat pool for rig "+name+" provided by pack "+include+"\n")...)
-	}
+		// If the pack provides a polecat, append a comment to make the decision visible.
+		if packHasPolecat {
+			data = append(data, []byte(
+				"\n# Default polecat pool for rig "+name+" provided by pack "+include+"\n")...)
+		}
 
-	if err := fs.WriteFile(tomlPath, data, 0o644); err != nil {
-		fmt.Fprintf(stderr, "gc rig add: writing config: %v\n", err) //nolint:errcheck // best-effort stderr
-		return 1
+		if err := fs.WriteFile(tomlPath, data, 0o644); err != nil {
+			fmt.Fprintf(stderr, "gc rig add: writing config: %v\n", err) //nolint:errcheck // best-effort stderr
+			return 1
+		}
 	}
 
 	// --- Phase 3: Routes (uses config, best-effort) ---
@@ -252,9 +265,12 @@ func doRigAdd(fs fsys.FS, cityPath, rigPath, include string, startSuspended bool
 	}
 	w("  Generated routes.jsonl for cross-rig routing")
 
-	if startSuspended {
+	switch {
+	case reAdd:
+		w("Rig re-initialized.")
+	case startSuspended:
 		w("Rig added (suspended — use 'gc rig resume' to activate).")
-	} else {
+	default:
 		w("Rig added.")
 	}
 	return 0

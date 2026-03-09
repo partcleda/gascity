@@ -56,7 +56,7 @@ func TestDoRigAdd_Basic(t *testing.T) {
 	}
 }
 
-func TestDoRigAdd_DuplicateName(t *testing.T) {
+func TestDoRigAdd_DuplicateNameDifferentPath(t *testing.T) {
 	cityPath := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(cityPath, ".gc"), 0o755); err != nil {
 		t.Fatal(err)
@@ -77,10 +77,64 @@ func TestDoRigAdd_DuplicateName(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := doRigAdd(fsys.OSFS{}, cityPath, rigPath, "", false, &stdout, &stderr)
 	if code != 1 {
-		t.Fatalf("doRigAdd should fail for duplicate, got code %d", code)
+		t.Fatalf("doRigAdd should fail for duplicate with different path, got code %d", code)
 	}
-	if !strings.Contains(stderr.String(), "already registered") {
-		t.Errorf("stderr should mention duplicate: %s", stderr.String())
+	errMsg := stderr.String()
+	if !strings.Contains(errMsg, "already registered") {
+		t.Errorf("stderr should mention already registered: %s", errMsg)
+	}
+	if !strings.Contains(errMsg, "/some/path") {
+		t.Errorf("stderr should mention existing path: %s", errMsg)
+	}
+}
+
+func TestDoRigAdd_IdempotentSameNameSamePath(t *testing.T) {
+	cityPath := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cityPath, ".gc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	rigPath := filepath.Join(t.TempDir(), "my-frontend")
+	if err := os.MkdirAll(rigPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Config already has this rig at the same path.
+	cityToml := "[workspace]\nname = \"test-city\"\n\n[[agents]]\nname = \"mayor\"\n\n[[rigs]]\nname = \"my-frontend\"\npath = \"" + rigPath + "\"\n\n[[agents]]\nname = \"polecat\"\ndir = \"my-frontend\"\n[agents.pool]\nmin = 0\nmax = -1\n"
+	if err := os.WriteFile(filepath.Join(cityPath, "city.toml"), []byte(cityToml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Save original config content.
+	origData, err := os.ReadFile(filepath.Join(cityPath, "city.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("GC_DOLT", "skip")
+	t.Setenv("GC_BEADS", "file")
+
+	var stdout, stderr bytes.Buffer
+	code := doRigAdd(fsys.OSFS{}, cityPath, rigPath, "", false, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("doRigAdd should succeed for same name+path, got code %d, stderr: %s", code, stderr.String())
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "Re-initializing rig") {
+		t.Errorf("output should say re-initializing: %s", output)
+	}
+	if !strings.Contains(output, "Rig re-initialized.") {
+		t.Errorf("output should say re-initialized: %s", output)
+	}
+
+	// city.toml must be unchanged (no duplicate rig or polecat added).
+	newData, err := os.ReadFile(filepath.Join(cityPath, "city.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(newData) != string(origData) {
+		t.Errorf("city.toml should be unchanged on re-add.\nBefore:\n%s\nAfter:\n%s", origData, newData)
 	}
 }
 
