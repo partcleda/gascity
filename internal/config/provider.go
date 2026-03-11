@@ -150,7 +150,7 @@ func BuiltinProviders() map[string]ProviderSpec {
 	return map[string]ProviderSpec{
 		"claude": {
 			DisplayName:            "Claude Code",
-			Command:                `sh -c 'EXTRA=""; if command -v bd >/dev/null 2>&1 && [ -n "$GC_AGENT" ]; then BJ=$(bd list --json --label="agent:$GC_AGENT" --label="gc:session" 2>/dev/null); WD=$(echo "$BJ" | jq -r ".[0].metadata.worktree_dir // empty" 2>/dev/null); SK=$(echo "$BJ" | jq -r ".[0].metadata.session_key // empty" 2>/dev/null); BI=$(echo "$BJ" | jq -r ".[0].id // empty" 2>/dev/null); [ -n "$WD" ] && [ -d "$WD" ] && EXTRA="--cwd $WD"; if [ -n "$SK" ]; then EXTRA="$EXTRA --resume $SK"; elif [ -n "$BI" ]; then SK=$(cat /proc/sys/kernel/random/uuid 2>/dev/null); if [ -n "$SK" ]; then bd update "$BI" --set-metadata session_key="$SK" 2>/dev/null; EXTRA="$EXTRA --session-id $SK"; fi; fi; fi; exec ${GC_CLI:-claude} --dangerously-skip-permissions $EXTRA "$@"' --`,
+			Command:                `sh -c 'EXTRA=""; if command -v bd >/dev/null 2>&1 && [ -n "$GC_AGENT" ]; then BJ=$(bd list --json --label="agent:$GC_AGENT" --label="gc:session" 2>/dev/null); WD=$(echo "$BJ" | jq -r ".[0].metadata.worktree_dir // empty" 2>/dev/null); [ -n "$WD" ] && [ -d "$WD" ] && EXTRA="--cwd $WD"; fi; exec ${GC_CLI:-claude} --dangerously-skip-permissions $EXTRA "$@"' --`,
 			PathCheck:              "claude",
 			PromptMode:             "arg",
 			ReadyDelayMs:           10000,
