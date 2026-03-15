@@ -112,9 +112,11 @@ func computeWorkSet(cfg *config.City, runner ScaleCheckRunner, cityDir string) m
 		if wq == "" {
 			continue
 		}
-		dir := a.Dir
-		if dir == "" {
-			dir = cityDir
+		dir := cityDir
+		if a.Dir != "" {
+			if resolved, err := resolveAgentDir(cityDir, a.Dir); err == nil {
+				dir = resolved
+			}
 		}
 		out, err := runner(wq, dir)
 		if err != nil {

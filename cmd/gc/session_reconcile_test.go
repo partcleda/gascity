@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -365,6 +367,33 @@ func TestComputeWorkSet_RunsWorkQuery(t *testing.T) {
 	}
 	if work["idle"] {
 		t.Error("expected idle to have no work")
+	}
+}
+
+func TestComputeWorkSet_ResolvesRigDir(t *testing.T) {
+	cityDir := t.TempDir()
+	rigDir := filepath.Join(cityDir, "myrig")
+	if err := os.MkdirAll(rigDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.City{
+		Agents: []config.Agent{
+			{Name: "polecat", Dir: "myrig", Pool: &config.PoolConfig{Min: 0, Max: 3}},
+		},
+	}
+
+	runner := func(command, dir string) (string, error) {
+		// The dir must be the resolved absolute path, not the relative "myrig".
+		if dir == rigDir {
+			return "MC-1\n", nil
+		}
+		return "", fmt.Errorf("unexpected dir %q, want %q", dir, rigDir)
+	}
+
+	work := computeWorkSet(cfg, runner, cityDir)
+	if !work["myrig/polecat"] {
+		t.Error("expected myrig/polecat to have work when dir is resolved")
 	}
 }
 
