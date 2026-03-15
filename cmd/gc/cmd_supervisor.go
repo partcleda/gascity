@@ -309,6 +309,51 @@ type managedCity struct {
 	closer  io.Closer     // FileRecorder (or nil); closed on city stop
 }
 
+func managedCityStopTimeout(mc *managedCity) time.Duration {
+	timeout := supervisorCityReadyTimeout
+	if mc == nil || mc.cr == nil || mc.cr.cfg == nil {
+		return timeout
+	}
+	if startup := mc.cr.cfg.Session.StartupTimeoutDuration(); startup > timeout {
+		timeout = startup
+	}
+	if shutdown := mc.cr.cfg.Daemon.ShutdownTimeoutDuration(); shutdown > timeout {
+		timeout = shutdown
+	}
+	if drain := mc.cr.cfg.Daemon.DriftDrainTimeoutDuration(); drain > timeout {
+		timeout = drain
+	}
+	return timeout
+}
+
+func stopManagedCity(mc *managedCity, cityPath string, stderr io.Writer) {
+	if mc == nil {
+		return
+	}
+	mc.cancel()
+	timeout := managedCityStopTimeout(mc)
+	if timeout <= 0 {
+		timeout = supervisorCityReadyTimeout
+	}
+	select {
+	case <-mc.done:
+	case <-time.After(timeout):
+		fmt.Fprintf(stderr, "gc supervisor: city '%s' did not exit within %s after cancel; forcing shutdown\n", mc.name, timeout) //nolint:errcheck
+	}
+	if mc.cr != nil {
+		func() {
+			defer func() { recover() }() //nolint:errcheck
+			mc.cr.shutdown()
+		}()
+	}
+	if err := shutdownBeadsProvider(cityPath); err != nil {
+		fmt.Fprintf(stderr, "gc supervisor: city '%s': bead store: %v\n", mc.name, err) //nolint:errcheck
+	}
+	if mc.closer != nil {
+		mc.closer.Close() //nolint:errcheck
+	}
+}
+
 // runSupervisor is the main supervisor loop. It acquires the lock,
 // starts a control socket, reads the registry, starts CityRuntimes,
 // and runs until canceled.
@@ -467,18 +512,7 @@ func runSupervisor(stdout, stderr io.Writer) int {
 			mu.Unlock()
 			for name, mc := range toStop {
 				fmt.Fprintf(stdout, "Stopping city '%s'...\n", name) //nolint:errcheck
-				mc.cancel()
-				<-mc.done
-				func() {
-					defer func() { recover() }() //nolint:errcheck
-					mc.cr.shutdown()
-				}()
-				if err := shutdownBeadsProvider(name); err != nil {
-					fmt.Fprintf(stderr, "gc supervisor: city '%s': bead store: %v\n", name, err) //nolint:errcheck
-				}
-				if mc.closer != nil {
-					mc.closer.Close() //nolint:errcheck
-				}
+				stopManagedCity(mc, name, stderr)
 				fmt.Fprintf(stdout, "City '%s' stopped.\n", name) //nolint:errcheck
 			}
 			fmt.Fprintln(stdout, "Supervisor stopped.") //nolint:errcheck
@@ -548,18 +582,7 @@ func reconcileCities(
 	for i, mc := range toStop {
 		name := filepath.Base(toStopPaths[i])
 		fmt.Fprintf(stdout, "Unregistered city '%s', stopping...\n", name) //nolint:errcheck
-		mc.cancel()
-		<-mc.done
-		func() {
-			defer func() { recover() }() //nolint:errcheck
-			mc.cr.shutdown()
-		}()
-		if err := shutdownBeadsProvider(toStopPaths[i]); err != nil {
-			fmt.Fprintf(stderr, "gc supervisor: city '%s': bead store: %v\n", mc.name, err) //nolint:errcheck
-		}
-		if mc.closer != nil {
-			mc.closer.Close() //nolint:errcheck
-		}
+		stopManagedCity(mc, toStopPaths[i], stderr)
 		// Clear backoff so re-registering starts immediately.
 		func() {
 			mu.Lock()
@@ -609,18 +632,7 @@ func reconcileCities(
 	}()
 	for i, mc := range nameDriftCities {
 		fmt.Fprintf(stdout, "City name changed at '%s', restarting...\n", nameDriftPaths[i]) //nolint:errcheck
-		mc.cancel()
-		<-mc.done
-		func() {
-			defer func() { recover() }() //nolint:errcheck
-			mc.cr.shutdown()
-		}()
-		if mc.closer != nil {
-			mc.closer.Close() //nolint:errcheck
-		}
-		if err := shutdownBeadsProvider(nameDriftPaths[i]); err != nil {
-			fmt.Fprintf(stderr, "gc supervisor: city '%s': bead store: %v\n", mc.name, err) //nolint:errcheck
-		}
+		stopManagedCity(mc, nameDriftPaths[i], stderr)
 	}
 
 	// Start new cities (and name-drifted restarts). Build list under lock,

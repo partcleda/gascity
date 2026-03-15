@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -10,9 +11,22 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/gastownhall/gascity/internal/config"
+	"github.com/gastownhall/gascity/internal/events"
+	"github.com/gastownhall/gascity/internal/runtime"
 	"github.com/gastownhall/gascity/internal/supervisor"
 )
+
+type closerSpy struct {
+	closed bool
+}
+
+func (c *closerSpy) Close() error {
+	c.closed = true
+	return nil
+}
 
 func TestDoSupervisorLogsNoFile(t *testing.T) {
 	t.Setenv("GC_HOME", t.TempDir())
@@ -346,5 +360,61 @@ func TestDoStartRejectsStandaloneOnlyFlagsUnderSupervisor(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "only apply to the legacy standalone controller") {
 		t.Fatalf("stderr = %q, want standalone-flag rejection", stderr.String())
+	}
+}
+
+func TestStopManagedCityForcesCleanupAfterTimeout(t *testing.T) {
+	cityPath := t.TempDir()
+	logFile := filepath.Join(t.TempDir(), "ops.log")
+	script := writeSpyScript(t, logFile)
+	t.Setenv("GC_BEADS", "exec:"+script)
+
+	oldReadyTimeout := supervisorCityReadyTimeout
+	supervisorCityReadyTimeout = 20 * time.Millisecond
+	t.Cleanup(func() {
+		supervisorCityReadyTimeout = oldReadyTimeout
+	})
+
+	closer := &closerSpy{}
+	mc := &managedCity{
+		name:   "bright-lights",
+		cancel: func() {},
+		done:   make(chan struct{}),
+		closer: closer,
+		cr: &CityRuntime{
+			cfg: &config.City{
+				Session: config.SessionConfig{StartupTimeout: "20ms"},
+				Daemon: config.DaemonConfig{
+					ShutdownTimeout:   "20ms",
+					DriftDrainTimeout: "20ms",
+				},
+			},
+			rops:   newFakeReconcileOps(),
+			sp:     runtime.NewFake(),
+			rec:    events.Discard,
+			stdout: io.Discard,
+			stderr: io.Discard,
+		},
+	}
+
+	var stderr bytes.Buffer
+	start := time.Now()
+	stopManagedCity(mc, cityPath, &stderr)
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("stopManagedCity took %s, want bounded timeout", elapsed)
+	}
+	if !strings.Contains(stderr.String(), "did not exit within") {
+		t.Fatalf("stderr = %q, want forced-timeout warning", stderr.String())
+	}
+	if !closer.closed {
+		t.Fatal("expected closer to be closed after forced cleanup")
+	}
+
+	ops := readOpLog(t, logFile)
+	if len(ops) != 2 {
+		t.Fatalf("expected bead provider stop+shutdown, got %v", ops)
+	}
+	if !strings.HasPrefix(ops[0], "stop") || !strings.HasPrefix(ops[1], "shutdown") {
+		t.Fatalf("unexpected bead provider ops: %v", ops)
 	}
 }
