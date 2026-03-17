@@ -5,6 +5,13 @@ the reusable infrastructure from Gas Town into a configurable toolkit with
 runtime providers, work routing, formulas, orders, health patrol, and a
 declarative city configuration.
 
+## Coming from Gas Town?
+
+Start with [Coming from Gas Town?](docs/getting-started/coming-from-gastown.md).
+It maps Town roles, commands, plugins, convoys, and directory habits onto Gas
+City's primitive-first model so experienced Gas Town users can ramp without
+trying to port the entire Town architecture literally.
+
 ## What You Get
 
 - Declarative city configuration in `city.toml`

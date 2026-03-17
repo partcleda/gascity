@@ -15,6 +15,9 @@ working notes.
   and the shortest path to a working `gc` binary.
 - [Quickstart](getting-started/quickstart) walks through the smallest city
   you can boot locally.
+- [Coming from Gas Town](getting-started/coming-from-gastown) maps Town
+  roles, commands, plugins, convoys, and filesystem habits onto Gas City's
+  primitives.
 - [Repository Map](getting-started/repository-map) explains where the CLI,
   runtime, config, store, and controller code live.
 - [Contributors](/contributors) collects the project rules, testing
