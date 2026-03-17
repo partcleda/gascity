@@ -261,7 +261,10 @@ func cmdInit(args []string, providerFlag, bootstrapProfileFlag string, stdout, s
 	MaterializeBeadsBdScript(cityPath) //nolint:errcheck // best-effort; only needed for bd provider
 	MaterializeBuiltinPacks(cityPath)  //nolint:errcheck // best-effort; only needed for bd provider
 	if wiz.configName == "gastown" {
-		MaterializeGastownPacks(cityPath) //nolint:errcheck // best-effort; gastown packs
+		if err := MaterializeGastownPacks(cityPath); err != nil {
+			fmt.Fprintf(stderr, "gc init: materializing gastown packs: %v\n", err) //nolint:errcheck // best-effort stderr
+			return 1
+		}
 	}
 	prefix := config.DeriveBeadsPrefix(cityName)
 	if _, err := initDirIfReady(cityPath, cityPath, prefix); err != nil {

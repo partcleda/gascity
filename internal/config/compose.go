@@ -457,6 +457,18 @@ func mergeWorkspace(base, fragment *City, fragMeta toml.MetaData, fragPath strin
 			base.Workspace.Includes, fragment.Workspace.Includes...)
 		prov.Workspace["includes"] = fragPath
 	}
+	// default_rig_includes is a []string — additive merge (append, not replace).
+	if fragMeta.IsDefined("workspace", "default_rig_includes") {
+		base.Workspace.DefaultRigIncludes = append(
+			base.Workspace.DefaultRigIncludes, fragment.Workspace.DefaultRigIncludes...)
+		prov.Workspace["default_rig_includes"] = fragPath
+	}
+	// global_fragments is a []string — additive merge (append, not replace).
+	if fragMeta.IsDefined("workspace", "global_fragments") {
+		base.Workspace.GlobalFragments = append(
+			base.Workspace.GlobalFragments, fragment.Workspace.GlobalFragments...)
+		prov.Workspace["global_fragments"] = fragPath
+	}
 }
 
 // resolveConfigPath resolves a path for composition. Paths prefixed with
