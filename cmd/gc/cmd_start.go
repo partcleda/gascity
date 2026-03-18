@@ -241,7 +241,7 @@ func doStart(args []string, controllerMode bool, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "gc start: runtime scaffold: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
-	if code := registerCityWithSupervisor(cityPath, stdout, stderr, "gc start"); code != 0 {
+	if code := registerCityWithSupervisor(cityPath, stdout, stderr, "gc start", true); code != 0 {
 		return code
 	}
 	fmt.Fprintln(stdout, "City started under supervisor.") //nolint:errcheck // best-effort stdout

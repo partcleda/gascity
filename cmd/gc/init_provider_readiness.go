@@ -46,6 +46,10 @@ func finalizeInit(cityPath string, stdout, stderr io.Writer, opts initFinalizeOp
 	if opts.showProgress {
 		logInitProgress(stdout, 6, "Checking provider readiness")
 	}
+	if err := fetchCityPacksIfNeeded(cityPath); err != nil {
+		fmt.Fprintf(stderr, "%s: fetching packs: %v\n", opts.commandName, err) //nolint:errcheck // best-effort stderr
+		return 1
+	}
 	if err := runInitProviderPreflight(cityPath, stdout, stderr, opts.commandName); err != nil {
 		return 1
 	}
@@ -59,7 +63,7 @@ func finalizeInit(cityPath string, stdout, stderr io.Writer, opts initFinalizeOp
 	if opts.showProgress {
 		logInitProgress(stdout, 7, "Registering city with supervisor")
 	}
-	return registerCityWithSupervisor(cityPath, stdout, stderr, opts.commandName)
+	return registerCityWithSupervisor(cityPath, stdout, stderr, opts.commandName, opts.showProgress)
 }
 
 func maybePrintWizardProviderGuidance(wiz wizardConfig, stdout io.Writer) {
@@ -105,7 +109,10 @@ func wizardProviderGuidanceMessage(item api.ReadinessItem) string {
 func runInitProviderPreflight(cityPath string, stdout, stderr io.Writer, commandName string) error {
 	cfg, _, err := config.LoadWithIncludes(fsys.OSFS{}, filepath.Join(cityPath, "city.toml"))
 	if err != nil {
-		return fmt.Errorf("loading config for provider readiness: %w", err)
+		fmt.Fprintf(stderr, "%s: city created, but startup is blocked by configuration loading\n", commandName) //nolint:errcheck // best-effort stderr
+		fmt.Fprintf(stderr, "%s: loading config for provider readiness: %v\n", commandName, err)                //nolint:errcheck // best-effort stderr
+		fmt.Fprintf(stderr, "%s: fix the config issue, then run 'gc start'\n", commandName)                     //nolint:errcheck // best-effort stderr
+		return errInitProviderPreflight
 	}
 	targets, warnings, err := collectInitProviderTargets(cfg)
 	if err != nil {
@@ -165,7 +172,7 @@ func collectInitProviderTargets(cfg *config.City) ([]initProviderTarget, []strin
 	seenTargets := make(map[string]struct{}, len(providerRefs))
 	seenWarnings := make(map[string]struct{}, len(providerRefs))
 	for _, ref := range providerRefs {
-		if _, err := config.ResolveProvider(&config.Agent{Provider: ref}, &config.Workspace{}, cfg.Providers, exec.LookPath); err != nil {
+		if _, err := config.ResolveProvider(&config.Agent{Provider: ref}, &cfg.Workspace, cfg.Providers, exec.LookPath); err != nil {
 			return nil, nil, fmt.Errorf("provider %q: %w", ref, err)
 		}
 

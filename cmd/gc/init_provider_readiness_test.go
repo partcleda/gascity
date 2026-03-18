@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gastownhall/gascity/internal/api"
 	"github.com/gastownhall/gascity/internal/config"
@@ -151,4 +152,185 @@ func TestFinalizeInitWarnsForUnprobeableCustomProviderAndContinues(t *testing.T)
 	if !strings.Contains(stdout.String(), "Wrapper Agent is referenced, but Gas City cannot verify its login state automatically yet.") {
 		t.Fatalf("stdout = %q, want unprobeable-provider warning", stdout.String())
 	}
+}
+
+func TestFinalizeInitFetchesRemotePacksBeforeProviderReadiness(t *testing.T) {
+	t.Setenv("GC_BEADS", "file")
+	t.Setenv("GC_DOLT", "skip")
+	configureIsolatedRuntimeEnv(t)
+
+	cityPath := filepath.Join(t.TempDir(), "bright-lights")
+	if err := os.MkdirAll(cityPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureCityScaffold(cityPath); err != nil {
+		t.Fatal(err)
+	}
+
+	remote := initBareProviderPackRepo(t, "remote-pack", "claude")
+	configText := strings.Join([]string{
+		"[workspace]",
+		`name = "bright-lights"`,
+		`includes = ["remote-pack"]`,
+		"",
+		"[packs.remote-pack]",
+		`source = "` + remote + `"`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(cityPath, "city.toml"), []byte(configText), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	oldProbe := initProbeProvidersReadiness
+	initProbeProvidersReadiness = func(_ context.Context, providers []string, fresh bool) (map[string]api.ReadinessItem, error) {
+		if !fresh {
+			t.Fatal("finalizeInit should force a fresh readiness probe")
+		}
+		if len(providers) != 1 || providers[0] != "claude" {
+			t.Fatalf("providers = %v, want [claude]", providers)
+		}
+		return map[string]api.ReadinessItem{
+			"claude": {
+				Name:        "claude",
+				Kind:        api.ProbeKindProvider,
+				DisplayName: "Claude Code",
+				Status:      api.ProbeStatusConfigured,
+			},
+		}, nil
+	}
+	t.Cleanup(func() { initProbeProvidersReadiness = oldProbe })
+
+	oldRegister := registerCityWithSupervisorTestHook
+	registerCityWithSupervisorTestHook = func(_ string, _ string, _ io.Writer, _ io.Writer) (bool, int) {
+		return true, 0
+	}
+	t.Cleanup(func() { registerCityWithSupervisorTestHook = oldRegister })
+
+	var stdout, stderr bytes.Buffer
+	code := finalizeInit(cityPath, &stdout, &stderr, initFinalizeOptions{
+		commandName: "gc init",
+	})
+	if code != 0 {
+		t.Fatalf("finalizeInit = %d, want 0: %s", code, stderr.String())
+	}
+
+	cacheDir := config.PackCachePath(cityPath, "remote-pack", config.PackSource{Source: remote})
+	if _, err := os.Stat(filepath.Join(cacheDir, "pack.toml")); err != nil {
+		t.Fatalf("expected fetched pack cache at %s: %v", cacheDir, err)
+	}
+}
+
+func TestFinalizeInitReportsConfigLoadErrorDuringProviderPreflight(t *testing.T) {
+	t.Setenv("GC_BEADS", "file")
+	t.Setenv("GC_DOLT", "skip")
+	configureIsolatedRuntimeEnv(t)
+
+	cityPath := filepath.Join(t.TempDir(), "bright-lights")
+	if err := os.MkdirAll(cityPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureCityScaffold(cityPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cityPath, "city.toml"), []byte("[workspace]\nname = \"bright-lights\"\n[broken"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := finalizeInit(cityPath, &stdout, &stderr, initFinalizeOptions{
+		commandName: "gc init",
+	})
+	if code != 1 {
+		t.Fatalf("finalizeInit = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "startup is blocked by configuration loading") {
+		t.Fatalf("stderr = %q, want configuration loading message", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "loading config for provider readiness") {
+		t.Fatalf("stderr = %q, want config load detail", stderr.String())
+	}
+}
+
+func TestFinalizeInitWithoutProgressSkipsStepCounter(t *testing.T) {
+	t.Setenv("GC_BEADS", "file")
+	t.Setenv("GC_DOLT", "skip")
+	configureIsolatedRuntimeEnv(t)
+
+	cityPath := filepath.Join(t.TempDir(), "bright-lights")
+	var initStdout, initStderr bytes.Buffer
+	code := doInit(fsys.OSFS{}, cityPath, wizardConfig{
+		configName: "tutorial",
+		provider:   "claude",
+	}, &initStdout, &initStderr)
+	if code != 0 {
+		t.Fatalf("doInit = %d, want 0: %s", code, initStderr.String())
+	}
+
+	oldProbe := initProbeProvidersReadiness
+	initProbeProvidersReadiness = func(_ context.Context, providers []string, fresh bool) (map[string]api.ReadinessItem, error) {
+		if !fresh {
+			t.Fatal("finalizeInit should force a fresh readiness probe")
+		}
+		return map[string]api.ReadinessItem{
+			"claude": {
+				Name:        "claude",
+				Kind:        api.ProbeKindProvider,
+				DisplayName: "Claude Code",
+				Status:      api.ProbeStatusConfigured,
+			},
+		}, nil
+	}
+	t.Cleanup(func() { initProbeProvidersReadiness = oldProbe })
+
+	gcHome := t.TempDir()
+	t.Setenv("GC_HOME", gcHome)
+	withSupervisorTestHooks(
+		t,
+		func(_, _ io.Writer) int { return 0 },
+		func(_, _ io.Writer) int { return 0 },
+		func() int { return 4242 },
+		func(string) (bool, bool) { return true, true },
+		20*time.Millisecond,
+		time.Millisecond,
+	)
+
+	var stdout, stderr bytes.Buffer
+	code = finalizeInit(cityPath, &stdout, &stderr, initFinalizeOptions{
+		commandName:  "gc init",
+		showProgress: false,
+	})
+	if code != 0 {
+		t.Fatalf("finalizeInit = %d, want 0: %s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "[8/8]") {
+		t.Fatalf("stdout = %q, want no progress counter", stdout.String())
+	}
+}
+
+func initBareProviderPackRepo(t *testing.T, name, provider string) string {
+	t.Helper()
+
+	root := t.TempDir()
+	workDir := filepath.Join(root, "work")
+	bareDir := filepath.Join(root, name+".git")
+
+	mustGit(t, "", "init", workDir)
+	packToml := strings.Join([]string{
+		"[pack]",
+		`name = "` + name + `"`,
+		`version = "1.0.0"`,
+		"schema = 1",
+		"",
+		"[[agent]]",
+		`name = "worker"`,
+		`provider = "` + provider + `"`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(workDir, "pack.toml"), []byte(packToml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, workDir, "add", "-A")
+	mustGit(t, workDir, "commit", "-m", "initial")
+	mustGit(t, workDir, "clone", "--bare", workDir, bareDir)
+	return bareDir
 }

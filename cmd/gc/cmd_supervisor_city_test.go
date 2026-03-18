@@ -77,7 +77,7 @@ func TestRegisterCityWithSupervisorRollsBackWhenCityNeverBecomesReady(t *testing
 	)
 
 	var stdout, stderr bytes.Buffer
-	code := registerCityWithSupervisor(cityPath, &stdout, &stderr, "gc register")
+	code := registerCityWithSupervisor(cityPath, &stdout, &stderr, "gc register", true)
 	if code != 1 {
 		t.Fatalf("registerCityWithSupervisor code = %d, want 1", code)
 	}
@@ -124,7 +124,7 @@ func TestRegisterCityWithSupervisorWaitsForConfiguredStartupTimeout(t *testing.T
 	)
 
 	var stdout, stderr bytes.Buffer
-	code := registerCityWithSupervisor(cityPath, &stdout, &stderr, "gc register")
+	code := registerCityWithSupervisor(cityPath, &stdout, &stderr, "gc register", true)
 	if code != 0 {
 		t.Fatalf("registerCityWithSupervisor code = %d, want 0: %s", code, stderr.String())
 	}
@@ -176,7 +176,7 @@ func TestRegisterCityWithSupervisorFetchesRemotePacksBeforeLoadingIncludes(t *te
 	)
 
 	var stdout, stderr bytes.Buffer
-	code := registerCityWithSupervisor(cityPath, &stdout, &stderr, "gc register")
+	code := registerCityWithSupervisor(cityPath, &stdout, &stderr, "gc register", true)
 	if code != 0 {
 		t.Fatalf("registerCityWithSupervisor code = %d, want 0: %s", code, stderr.String())
 	}
@@ -226,7 +226,7 @@ func TestRegisterCityWithSupervisorRejectsStandaloneController(t *testing.T) {
 	}()
 
 	var stdout, stderr bytes.Buffer
-	code := registerCityWithSupervisor(cityPath, &stdout, &stderr, "gc register")
+	code := registerCityWithSupervisor(cityPath, &stdout, &stderr, "gc register", true)
 	if code != 1 {
 		t.Fatalf("registerCityWithSupervisor code = %d, want 1", code)
 	}
