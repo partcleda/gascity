@@ -298,20 +298,12 @@ func gracefulStopAll(
 	sp runtime.Provider,
 	timeout time.Duration,
 	rec events.Recorder,
+	cfg *config.City,
 	stdout, stderr io.Writer,
 ) {
 	if timeout <= 0 || len(names) == 0 {
 		// Immediate kill (no grace period).
-		for _, name := range names {
-			if err := sp.Stop(name); err != nil {
-				fmt.Fprintf(stderr, "gc stop: stopping %s: %v\n", name, err) //nolint:errcheck // best-effort stderr
-			} else {
-				fmt.Fprintf(stdout, "Stopped agent '%s'\n", name) //nolint:errcheck // best-effort stdout
-				rec.Record(events.Event{
-					Type: events.SessionStopped, Actor: "gc", Subject: name,
-				})
-			}
-		}
+		stopSessionsBounded(names, cfg, sp, rec, "gc", stdout, stderr)
 		return
 	}
 
@@ -345,6 +337,7 @@ func gracefulStopAll(
 	}
 
 	// Pass 2: kill survivors.
+	var survivors []string
 	for _, name := range names {
 		if !sp.IsRunning(name) {
 			fmt.Fprintf(stdout, "Agent '%s' exited gracefully\n", name) //nolint:errcheck // best-effort stdout
@@ -353,15 +346,9 @@ func gracefulStopAll(
 			})
 			continue
 		}
-		if err := sp.Stop(name); err != nil {
-			fmt.Fprintf(stderr, "gc stop: stopping %s: %v\n", name, err) //nolint:errcheck // best-effort stderr
-		} else {
-			fmt.Fprintf(stdout, "Stopped agent '%s'\n", name) //nolint:errcheck // best-effort stdout
-			rec.Record(events.Event{
-				Type: events.SessionStopped, Actor: "gc", Subject: name,
-			})
-		}
+		survivors = append(survivors, name)
 	}
+	stopSessionsBounded(survivors, cfg, sp, rec, "gc", stdout, stderr)
 }
 
 // controllerLoop is a compatibility shim that wraps CityRuntime.run().

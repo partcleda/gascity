@@ -120,43 +120,27 @@ func doRigRestart(
 	rigName, cityName, sessionTemplate string,
 	stdout, stderr io.Writer,
 ) int {
-	killed := 0
+	var names []string
 	for _, a := range agents {
 		pool := a.EffectivePool()
 		if !pool.IsMultiInstance() {
 			// Single agent.
 			sn := lookupSessionNameOrLegacy(store, cityName, a.QualifiedName(), sessionTemplate)
 			if sp.IsRunning(sn) {
-				if err := sp.Stop(sn); err != nil {
-					fmt.Fprintf(stderr, "gc rig restart: stopping %s: %v\n", sn, err) //nolint:errcheck // best-effort stderr
-					continue
-				}
-				rec.Record(events.Event{
-					Type:    events.SessionStopped,
-					Actor:   eventActor(),
-					Subject: a.QualifiedName(),
-				})
-				killed++
+				names = append(names, sn)
 			}
 		} else {
 			// Pool agent: discover instances (static for bounded, live for unlimited).
 			for _, qualifiedInstance := range discoverPoolInstances(a.Name, a.Dir, pool, cityName, sessionTemplate, sp) {
 				sn := lookupSessionNameOrLegacy(store, cityName, qualifiedInstance, sessionTemplate)
 				if sp.IsRunning(sn) {
-					if err := sp.Stop(sn); err != nil {
-						fmt.Fprintf(stderr, "gc rig restart: stopping %s: %v\n", sn, err) //nolint:errcheck // best-effort stderr
-						continue
-					}
-					rec.Record(events.Event{
-						Type:    events.SessionStopped,
-						Actor:   eventActor(),
-						Subject: qualifiedInstance,
-					})
-					killed++
+					names = append(names, sn)
 				}
 			}
 		}
 	}
+	cfg := &config.City{Agents: agents}
+	killed := stopSessionsBounded(names, cfg, sp, rec, eventActor(), stdout, stderr)
 
 	fmt.Fprintf(stdout, "Restarted %d agent(s) in rig '%s' (killed sessions; reconciler will restart)\n", killed, rigName) //nolint:errcheck // best-effort stdout
 	return 0

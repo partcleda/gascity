@@ -2043,7 +2043,7 @@ func TestDoStopOneAgentRunning(t *testing.T) {
 	_ = sp.Start(context.Background(), "mayor", runtime.Config{})
 
 	var stdout, stderr bytes.Buffer
-	code := doStop([]string{"mayor"}, sp, 0, events.Discard, &stdout, &stderr)
+	code := doStop([]string{"mayor"}, sp, nil, 0, events.Discard, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("doStop = %d, want 0; stderr: %s", code, stderr.String())
 	}
@@ -2062,7 +2062,7 @@ func TestDoStopOneAgentRunning(t *testing.T) {
 func TestDoStopNoAgents(t *testing.T) {
 	sp := runtime.NewFake()
 	var stdout, stderr bytes.Buffer
-	code := doStop(nil, sp, 0, events.Discard, &stdout, &stderr)
+	code := doStop(nil, sp, nil, 0, events.Discard, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("doStop = %d, want 0; stderr: %s", code, stderr.String())
 	}
@@ -2081,7 +2081,7 @@ func TestDoStopAgentNotRunning(t *testing.T) {
 	// "mayor" not started in provider — IsRunning returns false.
 
 	var stdout, stderr bytes.Buffer
-	code := doStop([]string{"mayor"}, sp, 0, events.Discard, &stdout, &stderr)
+	code := doStop([]string{"mayor"}, sp, nil, 0, events.Discard, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("doStop = %d, want 0; stderr: %s", code, stderr.String())
 	}
@@ -2101,7 +2101,7 @@ func TestDoStopMultipleAgents(t *testing.T) {
 	_ = sp.Start(context.Background(), "worker", runtime.Config{})
 
 	var stdout, stderr bytes.Buffer
-	code := doStop([]string{"mayor", "worker"}, sp, 0, events.Discard, &stdout, &stderr)
+	code := doStop([]string{"mayor", "worker"}, sp, nil, 0, events.Discard, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("doStop = %d, want 0; stderr: %s", code, stderr.String())
 	}
@@ -2121,7 +2121,7 @@ func TestDoStopStopError(t *testing.T) {
 	sp := runtime.NewFailFake() // Stop will fail
 
 	var stdout, stderr bytes.Buffer
-	code := doStop([]string{"mayor"}, sp, 0, events.Discard, &stdout, &stderr)
+	code := doStop([]string{"mayor"}, sp, nil, 0, events.Discard, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("doStop = %d, want 0 (errors are non-fatal); stderr: %s", code, stderr.String())
 	}
