@@ -621,6 +621,14 @@ op_start() {
 
     ensure_dolt_identity
 
+    # Check for required tools before attempting anything.
+    if ! command -v flock >/dev/null 2>&1; then
+        die "flock is required but not installed. Install: brew install flock (macOS) or apt install util-linux (Linux)"
+    fi
+    if ! command -v dolt >/dev/null 2>&1; then
+        die "dolt is required but not installed. Install: https://github.com/dolthub/dolt/releases"
+    fi
+
     # Create data dir and runtime state dir if needed.
     mkdir -p "$DATA_DIR" "$(dirname "$LOCK_FILE")"
 
