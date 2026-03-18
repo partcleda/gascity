@@ -247,6 +247,12 @@ func cmdSling(args []string, isFormula, doNudge, force bool, title string, vars 
 		target = rig.DefaultSlingTarget
 	}
 
+	// Ensure rig paths are absolute before agent/rig context resolution.
+	// Without this, currentRigContext can't match CWD against relative
+	// rig paths, so bare agent names (e.g., "claude") don't resolve to
+	// rig-scoped implicit agents (e.g., "hello-world/claude").
+	resolveRigPaths(cityPath, cfg.Rigs)
+
 	a, ok := resolveAgentIdentity(cfg, target, currentRigContext(cfg))
 	if !ok {
 		fmt.Fprintln(stderr, agentNotFoundMsg("gc sling", target, cfg)) //nolint:errcheck // best-effort stderr
