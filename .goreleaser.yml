@@ -33,6 +33,12 @@ brews:
     license: "MIT"
     install: |
       bin.install "gc"
+    caveats: |
+      To start the Gas City supervisor now and auto-restart on login:
+        brew services start gascity
+    post_install: |
+      # Kill any standalone supervisor so launchd takes over cleanly.
+      quiet_system bin/"gc", "supervisor", "stop"
     service: |
       run [opt_bin/"gc", "supervisor", "run"]
       keep_alive true
