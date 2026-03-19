@@ -51,8 +51,9 @@ func setupCity(t *testing.T, guard *tmuxtest.Guard, agents []agentConfig) string
 
 	cityDir := filepath.Join(t.TempDir(), cityName)
 
-	// gc init — front door.
-	out, err := gc("", "init", cityDir)
+	// gc init — front door. Skip provider readiness because CI
+	// doesn't have claude/codex/gemini installed.
+	out, err := gc("", "init", "--skip-provider-readiness", cityDir)
 	if err != nil {
 		t.Fatalf("gc init failed: %v\noutput: %s", err, out)
 	}
