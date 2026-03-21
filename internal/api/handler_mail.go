@@ -39,6 +39,7 @@ func (s *Server) handleMailList(w http.ResponseWriter, r *http.Request) {
 			if msgs == nil {
 				msgs = []mail.Message{}
 			}
+			msgs = tagRig(msgs, rig)
 			if !pp.IsPaging {
 				total := len(msgs)
 				if pp.Limit < len(msgs) {
@@ -63,7 +64,7 @@ func (s *Server) handleMailList(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, "internal", "mail provider "+name+": "+err.Error())
 				return
 			}
-			allMsgs = append(allMsgs, msgs...)
+			allMsgs = append(allMsgs, tagRig(msgs, name)...)
 		}
 		if allMsgs == nil {
 			allMsgs = []mail.Message{}
@@ -98,6 +99,7 @@ func (s *Server) handleMailList(w http.ResponseWriter, r *http.Request) {
 			if msgs == nil {
 				msgs = []mail.Message{}
 			}
+			msgs = tagRig(msgs, rig)
 			if !pp.IsPaging {
 				total := len(msgs)
 				if pp.Limit < len(msgs) {
@@ -122,7 +124,7 @@ func (s *Server) handleMailList(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, "internal", "mail provider "+name+": "+err.Error())
 				return
 			}
-			allMsgs = append(allMsgs, msgs...)
+			allMsgs = append(allMsgs, tagRig(msgs, name)...)
 		}
 		if allMsgs == nil {
 			allMsgs = []mail.Message{}
@@ -349,6 +351,7 @@ func (s *Server) handleMailThread(w http.ResponseWriter, r *http.Request) {
 		if msgs == nil {
 			msgs = []mail.Message{}
 		}
+		msgs = tagRig(msgs, rig)
 		writeListJSON(w, s.latestIndex(), msgs, len(msgs))
 		return
 	}
@@ -362,7 +365,7 @@ func (s *Server) handleMailThread(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "internal", "mail provider "+name+": "+err.Error())
 			return
 		}
-		allMsgs = append(allMsgs, msgs...)
+		allMsgs = append(allMsgs, tagRig(msgs, name)...)
 	}
 	if allMsgs == nil {
 		allMsgs = []mail.Message{}
@@ -457,4 +460,13 @@ func sortedProviderNames(providers map[string]mail.Provider) []string {
 		deduped = append(deduped, name)
 	}
 	return deduped
+}
+
+// tagRig stamps every message with the provider/rig name so API consumers
+// can distinguish messages from different rigs in aggregated responses.
+func tagRig(msgs []mail.Message, rig string) []mail.Message {
+	for i := range msgs {
+		msgs[i].Rig = rig
+	}
+	return msgs
 }

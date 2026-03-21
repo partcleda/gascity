@@ -279,3 +279,67 @@ func TestMailReply(t *testing.T) {
 		t.Error("reply has no ThreadID")
 	}
 }
+
+func TestMailListIncludesRig(t *testing.T) {
+	state := newFakeState(t)
+	mp := state.mailProvs["myrig"]
+	mp.Send("alice", "bob", "Hi", "hello") //nolint:errcheck
+	srv := New(state)
+
+	// List without rig filter — aggregation path.
+	req := httptest.NewRequest("GET", "/v0/mail?status=all", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	var resp struct {
+		Items []mail.Message `json:"items"`
+	}
+	json.NewDecoder(rec.Body).Decode(&resp) //nolint:errcheck
+	if len(resp.Items) == 0 {
+		t.Fatal("expected at least 1 message")
+	}
+	if resp.Items[0].Rig != "myrig" {
+		t.Errorf("Items[0].Rig = %q, want %q", resp.Items[0].Rig, "myrig")
+	}
+
+	// List with rig filter — single-rig path.
+	req = httptest.NewRequest("GET", "/v0/mail?rig=myrig&status=all", nil)
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	json.NewDecoder(rec.Body).Decode(&resp) //nolint:errcheck
+	if len(resp.Items) == 0 {
+		t.Fatal("expected at least 1 message")
+	}
+	if resp.Items[0].Rig != "myrig" {
+		t.Errorf("Items[0].Rig = %q, want %q (single-rig path)", resp.Items[0].Rig, "myrig")
+	}
+}
+
+func TestMailThreadIncludesRig(t *testing.T) {
+	state := newFakeState(t)
+	mp := state.mailProvs["myrig"]
+	msg, _ := mp.Send("alice", "bob", "Thread test", "body")
+
+	// Reply to create a thread.
+	mp.Reply(msg.ID, "bob", "Re: Thread test", "reply body") //nolint:errcheck
+
+	srv := New(state)
+
+	req := httptest.NewRequest("GET", "/v0/mail/thread/"+msg.ThreadID+"?rig=myrig", nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+
+	var resp struct {
+		Items []mail.Message `json:"items"`
+	}
+	json.NewDecoder(rec.Body).Decode(&resp) //nolint:errcheck
+	if len(resp.Items) == 0 {
+		t.Fatal("expected thread messages")
+	}
+	for i, m := range resp.Items {
+		if m.Rig != "myrig" {
+			t.Errorf("Items[%d].Rig = %q, want %q", i, m.Rig, "myrig")
+		}
+	}
+}

@@ -29,6 +29,10 @@ type Message struct {
 	ReplyTo   string    `json:"reply_to,omitempty"`
 	Priority  int       `json:"priority,omitempty"`
 	CC        []string  `json:"cc,omitempty"`
+	// Rig is the provider/rig name that owns this message.
+	// Set by the API layer when returning messages so consumers can
+	// distinguish cross-rig messages in aggregated responses.
+	Rig string `json:"rig,omitempty"`
 }
 
 // Provider is the internal interface for mail backends. Implementations
