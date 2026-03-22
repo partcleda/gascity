@@ -72,6 +72,11 @@ func (c *StateCache) IsRunning(name string) bool {
 	}
 
 	// Stale, empty, or dirty — trigger refresh.
+	// When dirty, forget any in-flight singleflight so we get a fresh fetch
+	// instead of coalescing with a pre-invalidation call.
+	if dirty {
+		c.sf.Forget("refresh")
+	}
 	c.refresh()
 
 	// Read the (potentially updated) cache.

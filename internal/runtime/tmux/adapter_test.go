@@ -42,9 +42,6 @@ func TestProvider_StartStopIsRunning(t *testing.T) {
 	if !hasTmux() {
 		t.Skip("tmux not installed")
 	}
-	if os.Getenv("CI") != "" {
-		t.Skip("flaky in CI — state cache invalidation after Stop is async and unreliable without a TTY")
-	}
 
 	cfg := DefaultConfig()
 	cfg.SocketName = testSocketName
@@ -76,15 +73,8 @@ func TestProvider_StartStopIsRunning(t *testing.T) {
 		t.Fatalf("Stop: %v", err)
 	}
 
-	// The tmux state cache may report the session as alive for a brief
-	// period after Stop because the cache refresh interval hasn't elapsed.
-	// In CI this can take longer than expected. Poll with generous timeout.
-	deadline := time.Now().Add(10 * time.Second)
-	for p.IsRunning(name) {
-		if time.Now().After(deadline) {
-			t.Fatal("session should not be running after Stop (timed out waiting for cache)")
-		}
-		time.Sleep(200 * time.Millisecond)
+	if p.IsRunning(name) {
+		t.Fatal("session should not be running after Stop")
 	}
 
 	// Idempotent stop.
