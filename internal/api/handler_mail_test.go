@@ -106,7 +106,7 @@ func TestMailSendValidation(t *testing.T) {
 
 func TestMailCount(t *testing.T) {
 	state := newFakeState(t)
-	mp := state.mailProvs["myrig"]
+	mp := state.cityMailProv
 	mp.Send("a", "b", "msg1", "body1") //nolint:errcheck
 	mp.Send("a", "b", "msg2", "body2") //nolint:errcheck
 	srv := New(state)
@@ -124,7 +124,7 @@ func TestMailCount(t *testing.T) {
 
 func TestMailDelete(t *testing.T) {
 	state := newFakeState(t)
-	mp := state.mailProvs["myrig"]
+	mp := state.cityMailProv
 	msg, _ := mp.Send("mayor", "worker", "To delete", "content")
 	srv := New(state)
 
@@ -168,7 +168,7 @@ func TestMailDeleteNotFound(t *testing.T) {
 
 func TestMailListStatusAll(t *testing.T) {
 	state := newFakeState(t)
-	mp := state.mailProvs["myrig"]
+	mp := state.cityMailProv
 
 	// Send two messages to worker.
 	mp.Send("mayor", "worker", "First", "body1")  //nolint:errcheck
@@ -219,7 +219,7 @@ func TestMailListStatusAll(t *testing.T) {
 
 func TestMailListStatusAllAcrossRigs(t *testing.T) {
 	state := newFakeState(t)
-	mp := state.mailProvs["myrig"]
+	mp := state.cityMailProv
 
 	mp.Send("mayor", "worker", "Msg1", "body1") //nolint:errcheck
 	msg2, _ := mp.Send("mayor", "worker", "Msg2", "body2")
@@ -261,7 +261,7 @@ func TestMailListStatusInvalid(t *testing.T) {
 
 func TestMailReply(t *testing.T) {
 	state := newFakeState(t)
-	mp := state.mailProvs["myrig"]
+	mp := state.cityMailProv
 	msg, _ := mp.Send("mayor", "worker", "Initial", "content")
 	srv := New(state)
 
