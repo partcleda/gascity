@@ -1187,6 +1187,9 @@ name = "bright-lights"
 [[agent]]
 name = "mayor"
 prompt_template = "prompts/mayor.md"
+
+[[named_session]]
+template = "mayor"
 `
 	if got != want {
 		t.Errorf("city.toml content:\ngot:\n%s\nwant:\n%s", got, want)

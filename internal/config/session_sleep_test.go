@@ -210,3 +210,69 @@ func TestResolveSessionSleepPolicy(t *testing.T) {
 		}
 	})
 }
+
+func TestValidateNamedSessions_RejectsAlwaysWithSleepAfterIdle(t *testing.T) {
+	cfg := &City{
+		Workspace: Workspace{Name: "test-city"},
+		Agents: []Agent{{
+			Name:           "deacon",
+			SleepAfterIdle: "30s",
+		}},
+		NamedSessions: []NamedSession{{
+			Template: "deacon",
+			Mode:     "always",
+		}},
+	}
+
+	if err := ValidateNamedSessions(cfg); err == nil {
+		t.Fatal("ValidateNamedSessions() = nil, want error")
+	} else if !strings.Contains(err.Error(), "sleep_after_idle") {
+		t.Fatalf("ValidateNamedSessions() error = %v, want mention of sleep_after_idle", err)
+	}
+}
+
+func TestValidateNamedSessions_RejectsAliasSessionNameCollision(t *testing.T) {
+	cfg := &City{
+		Workspace: Workspace{
+			Name:            "test-city",
+			SessionTemplate: "sess-{{.Name}}",
+		},
+		Agents: []Agent{
+			{Name: "mayor"},
+			{Name: "sess-mayor"},
+		},
+		NamedSessions: []NamedSession{
+			{Template: "mayor"},
+			{Template: "sess-mayor"},
+		},
+	}
+
+	if err := ValidateNamedSessions(cfg); err == nil {
+		t.Fatal("ValidateNamedSessions() = nil, want collision error")
+	} else if !strings.Contains(err.Error(), "collides with deterministic session_name") {
+		t.Fatalf("ValidateNamedSessions() error = %v, want session_name collision", err)
+	}
+}
+
+func TestValidateNamedSessions_UsesResolvedWorkspaceName(t *testing.T) {
+	cfg := &City{
+		ResolvedWorkspaceName: "test-city",
+		Workspace: Workspace{
+			SessionTemplate: "{{.City}}--{{.Name}}",
+		},
+		Agents: []Agent{
+			{Name: "mayor"},
+			{Name: "test-city--mayor"},
+		},
+		NamedSessions: []NamedSession{
+			{Template: "mayor"},
+			{Template: "test-city--mayor"},
+		},
+	}
+
+	if err := ValidateNamedSessions(cfg); err == nil {
+		t.Fatal("ValidateNamedSessions() = nil, want collision error")
+	} else if !strings.Contains(err.Error(), "collides with deterministic session_name") {
+		t.Fatalf("ValidateNamedSessions() error = %v, want session_name collision", err)
+	}
+}

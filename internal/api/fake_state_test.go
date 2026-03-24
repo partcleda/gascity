@@ -55,6 +55,9 @@ func newFakeState(t *testing.T) *fakeState {
 			Agents: []config.Agent{
 				{Name: "worker", Dir: "myrig", Provider: "test-agent"},
 			},
+			NamedSessions: []config.NamedSession{
+				{Template: "worker", Dir: "myrig"},
+			},
 			Rigs: []config.Rig{
 				{Name: "myrig", Path: "/tmp/myrig"},
 			},

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -80,6 +81,7 @@ func buildDesiredStateWithSessionBeads(
 	var pendingPools []poolEvalWork
 	eligibleTemplates := make(map[string]bool)
 	realizedTemplates := make(map[string]bool)
+	namedSpecs := make(map[string]namedSessionSpec)
 
 	for i := range cfg.Agents {
 		if cfg.Agents[i].Suspended {
@@ -107,6 +109,18 @@ func buildDesiredStateWithSessionBeads(
 		// Pool agent: collect for parallel scale_check.
 		poolDir := agentCommandDir(cityPath, &cfg.Agents[i], cfg.Rigs)
 		pendingPools = append(pendingPools, poolEvalWork{agentIdx: i, pool: pool, poolDir: poolDir})
+	}
+
+	for i := range cfg.NamedSessions {
+		identity := cfg.NamedSessions[i].QualifiedName()
+		spec, ok := findNamedSessionSpec(cfg, cityName, identity)
+		if !ok {
+			continue
+		}
+		if agentUsesSuspendedRig(cityPath, spec.Agent, cfg.Rigs, suspendedRigPaths) {
+			continue
+		}
+		namedSpecs[identity] = spec
 	}
 
 	// Parallel scale_check evaluation for pools.
@@ -139,6 +153,28 @@ func buildDesiredStateWithSessionBeads(
 	}
 
 	markDiscoveredSessionTemplates(bp.sessionBeads, cityPath, cfg, desired, realizedTemplates, suspendedRigPaths)
+
+	namedWorkReady := make(map[string]bool, len(namedSpecs))
+	for identity, spec := range namedSpecs {
+		if spec.Mode == "always" {
+			realizedTemplates[identity] = true
+			continue
+		}
+		wq := prefixedWorkQueryForProbe(cfg, cityName, store, bp.sessionBeads, spec.Agent)
+		if wq == "" {
+			continue
+		}
+		dir := agentCommandDir(cityPath, spec.Agent, cfg.Rigs)
+		out, err := shellScaleCheck(wq, dir)
+		if err != nil {
+			continue
+		}
+		if workQueryHasReadyWork(strings.TrimSpace(out)) {
+			namedWorkReady[identity] = true
+			realizedTemplates[identity] = true
+		}
+	}
+
 	dependencyFloors := dependencyRealizedFloors(cfg, eligibleTemplates, realizedTemplates)
 
 	for j, pw := range pendingPools {
@@ -171,6 +207,29 @@ func buildDesiredStateWithSessionBeads(
 			installAgentSideEffects(bp, &instanceAgent, tp, stderr)
 			desired[tp.SessionName] = tp
 		}
+	}
+
+	for identity, spec := range namedSpecs {
+		_, hasCanonical := findCanonicalNamedSessionBead(bp.sessionBeads, identity)
+		if !hasCanonical {
+			if _, conflict := findNamedSessionConflict(bp.sessionBeads, spec); conflict {
+				continue
+			}
+		}
+		if spec.Mode != "always" && !hasCanonical && !namedWorkReady[identity] && dependencyFloors[identity] == 0 {
+			continue
+		}
+		fpExtra := buildFingerprintExtra(spec.Agent)
+		tp, err := resolveTemplate(bp, spec.Agent, identity, fpExtra)
+		if err != nil {
+			fmt.Fprintf(stderr, "buildDesiredState: named session %q: %v (skipping)\n", identity, err) //nolint:errcheck
+			continue
+		}
+		tp.Alias = identity
+		tp.ConfiguredNamedIdentity = identity
+		tp.ConfiguredNamedMode = spec.Mode
+		installAgentSideEffects(bp, spec.Agent, tp, stderr)
+		desired[tp.SessionName] = tp
 	}
 
 	// Phase 2: discover session beads created outside config iteration

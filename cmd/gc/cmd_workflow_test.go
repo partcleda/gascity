@@ -90,8 +90,19 @@ func TestDecorateDynamicFragmentRecipeSupportsExplicitPerStepAgents(t *testing.T
 	}
 
 	review := steps["expansion-review.review"]
-	if review.Assignee != reviewerSession {
-		t.Fatalf("review assignee = %q, want %q", review.Assignee, reviewerSession)
+	if review.Assignee == reviewerSession {
+		t.Fatalf("review assignee reused existing template chat %q; want fresh session", review.Assignee)
+	}
+	reviewID, err := resolveSessionID(store, review.Assignee)
+	if err != nil {
+		t.Fatalf("resolveSessionID(%q): %v", review.Assignee, err)
+	}
+	reviewBead, err := store.Get(reviewID)
+	if err != nil {
+		t.Fatalf("store.Get(%s): %v", reviewID, err)
+	}
+	if reviewBead.Metadata["template"] != "reviewer" {
+		t.Fatalf("review template = %q, want reviewer", reviewBead.Metadata["template"])
 	}
 	if review.Metadata["gc.routed_to"] != "reviewer" {
 		t.Fatalf("review gc.routed_to = %q, want reviewer", review.Metadata["gc.routed_to"])
@@ -287,9 +298,16 @@ func TestDecorateDynamicFragmentRecipeUsesSourceRouteRigContextForBareTargets(t 
 	}
 
 	review := fragment.Steps[0]
-	wantSession := lookupSessionNameOrLegacy(store, cfg.Workspace.Name, "frontend/reviewer", cfg.Workspace.SessionTemplate)
-	if review.Assignee != wantSession {
-		t.Fatalf("review assignee = %q, want %q", review.Assignee, wantSession)
+	reviewID, err := resolveSessionID(store, review.Assignee)
+	if err != nil {
+		t.Fatalf("resolveSessionID(%q): %v", review.Assignee, err)
+	}
+	reviewBead, err := store.Get(reviewID)
+	if err != nil {
+		t.Fatalf("store.Get(%s): %v", reviewID, err)
+	}
+	if reviewBead.Metadata["template"] != "frontend/reviewer" {
+		t.Fatalf("review template = %q, want frontend/reviewer", reviewBead.Metadata["template"])
 	}
 	if review.Metadata["gc.routed_to"] != "frontend/reviewer" {
 		t.Fatalf("review gc.routed_to = %q, want frontend/reviewer", review.Metadata["gc.routed_to"])

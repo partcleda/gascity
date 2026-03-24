@@ -662,7 +662,10 @@ func TestReconcileSessionBeads_OrphanNotRunningClosed(t *testing.T) {
 
 func TestReconcileSessionBeads_SuspendedSessionDrained(t *testing.T) {
 	env := newReconcilerTestEnv()
-	env.cfg = &config.City{Agents: []config.Agent{{Name: "worker"}}}
+	env.cfg = &config.City{
+		Agents:        []config.Agent{{Name: "worker"}},
+		NamedSessions: []config.NamedSession{{Template: "worker"}},
+	}
 	// "worker" is in config (configuredNames) but NOT in desiredState.
 	_ = env.sp.Start(context.Background(), "worker", runtime.Config{})
 	session := env.createSessionBead("worker", "worker")
@@ -680,7 +683,10 @@ func TestReconcileSessionBeads_SuspendedSessionDrained(t *testing.T) {
 
 func TestReconcileSessionBeads_SuspendedNotRunningClosed(t *testing.T) {
 	env := newReconcilerTestEnv()
-	env.cfg = &config.City{Agents: []config.Agent{{Name: "worker"}}}
+	env.cfg = &config.City{
+		Agents:        []config.Agent{{Name: "worker"}},
+		NamedSessions: []config.NamedSession{{Template: "worker"}},
+	}
 	session := env.createSessionBead("worker", "worker")
 
 	env.reconcile([]beads.Bead{session})

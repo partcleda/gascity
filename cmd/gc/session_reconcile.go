@@ -140,6 +140,9 @@ func sessionWithinDesiredConfig(session beads.Bead, cfg *config.City, poolDesire
 	if session.Metadata["dependency_only"] == "true" {
 		return agent, false
 	}
+	if isNamedSessionBead(session) {
+		return agent, namedSessionMode(session) == "always"
+	}
 	if agent.Pool == nil {
 		return agent, false
 	}
@@ -267,7 +270,8 @@ func containsWakeReason(reasons []WakeReason, want WakeReason) bool {
 }
 
 func hasDependencyWakeRoot(reasons []WakeReason) bool {
-	return containsWakeReason(reasons, WakeWork) ||
+	return containsWakeReason(reasons, WakeConfig) ||
+		containsWakeReason(reasons, WakeWork) ||
 		containsWakeReason(reasons, WakeWait) ||
 		containsWakeReason(reasons, WakeCreate) ||
 		containsWakeReason(reasons, WakeSession) ||
@@ -281,7 +285,7 @@ func hasDependencyWakeRoot(reasons []WakeReason) bool {
 // commands continue to operate on the real repo even when agent sessions use
 // isolated work_dir sandboxes. Non-empty output means work exists. Agents
 // without a work_query produce no WakeWork reason.
-func computeWorkSet(cfg *config.City, runner ScaleCheckRunner, cityDir string) map[string]bool {
+func computeWorkSet(cfg *config.City, runner ScaleCheckRunner, cityName, cityDir string, store beads.Store, sessionBeads *sessionBeadSnapshot) map[string]bool {
 	if cfg == nil || runner == nil {
 		return nil
 	}
@@ -293,7 +297,7 @@ func computeWorkSet(cfg *config.City, runner ScaleCheckRunner, cityDir string) m
 			continue
 		}
 		seen[qn] = true
-		wq := a.EffectiveWorkQuery()
+		wq := prefixedWorkQueryForProbe(cfg, cityName, store, sessionBeads, &a)
 		if wq == "" {
 			continue
 		}

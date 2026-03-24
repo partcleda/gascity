@@ -41,6 +41,10 @@ type TemplateParams struct {
 	SessionName string
 	// Alias is the human-readable session identifier used for commands and mail.
 	Alias string
+	// ConfiguredNamedIdentity marks a canonical named session bead reserved in config.
+	ConfiguredNamedIdentity string
+	// ConfiguredNamedMode records the controller mode for canonical named sessions.
+	ConfiguredNamedMode string
 	// FPExtra carries additional fingerprint data (pool config, etc.).
 	FPExtra map[string]string
 	// ResolvedProvider is the resolved provider spec (for ACP routing, etc.).

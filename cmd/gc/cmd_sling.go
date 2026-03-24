@@ -891,10 +891,18 @@ func resolveSlingEnv(a config.Agent, deps slingDeps) (map[string]string, error) 
 	if a.IsPool() {
 		return nil, nil
 	}
-	sn, err := ensureSessionForTemplate(deps.CityPath, deps.Cfg, deps.Store, a.QualifiedName(), deps.Stderr)
-	if err != nil {
-		return nil, err
+	if deps.Cfg != nil && config.FindAgent(deps.Cfg, a.QualifiedName()) != nil {
+		sn, err := ensureSessionForTemplate(deps.CityPath, deps.Cfg, deps.Store, a.QualifiedName(), deps.Stderr)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"GC_SLING_TARGET": sn}, nil
 	}
+	sessionTemplate := ""
+	if deps.Cfg != nil {
+		sessionTemplate = deps.Cfg.Workspace.SessionTemplate
+	}
+	sn := lookupSessionNameOrLegacy(deps.Store, deps.CityName, a.QualifiedName(), sessionTemplate)
 	return map[string]string{"GC_SLING_TARGET": sn}, nil
 }
 
@@ -1362,10 +1370,17 @@ func doSlingNudge(a *config.Agent, cityName, cityPath string, cfg *config.City,
 	}
 
 	// Fixed agent: nudge directly.
-	sn, err := ensureSessionForTemplate(cityPath, cfg, store, a.QualifiedName(), stderr)
-	if err != nil {
-		fmt.Fprintf(stderr, "cannot nudge: %v\n", err) //nolint:errcheck // best-effort
-		return
+	sn := ""
+	if cfg != nil && config.FindAgent(cfg, a.QualifiedName()) != nil {
+		var err error
+		sn, err = ensureSessionForTemplate(cityPath, cfg, store, a.QualifiedName(), stderr)
+		if err != nil {
+			fmt.Fprintf(stderr, "cannot nudge: %v\n", err) //nolint:errcheck // best-effort
+			return
+		}
+	}
+	if sn == "" {
+		sn = lookupSessionNameOrLegacy(store, cityName, a.QualifiedName(), st)
 	}
 	target := buildSlingNudgeTarget(*a, cityName, cityPath, cfg, store, sn)
 	deliverSlingNudge(target, sp, store, cityPath, stdout, stderr)

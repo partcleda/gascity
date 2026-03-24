@@ -47,6 +47,7 @@ func LoadWithIncludes(fs fsys.FS, path string, extraIncludes ...string) (*City, 
 	cityRoot := filepath.Dir(path)
 	prov := newProvenance(path)
 	prov.Warnings = append(prov.Warnings, rootWarnings...)
+	root.ResolvedWorkspaceName = filepath.Base(cityRoot)
 
 	// Track root's resources.
 	trackAgents(prov, root.Agents, path)
@@ -172,6 +173,12 @@ func LoadWithIncludes(fs fsys.FS, path string, extraIncludes ...string) (*City, 
 	// layers have been applied so runtime consumers can trust the values.
 	NormalizeSessionSleepFields(root)
 
+	// Validate named session declarations after pack expansion so stamped
+	// identities and referenced templates are final.
+	if err := ValidateNamedSessions(root); err != nil {
+		return nil, nil, err
+	}
+
 	// Validate all duration strings in the fully-merged config.
 	prov.Warnings = append(prov.Warnings, ValidateDurations(root, path)...)
 
@@ -208,9 +215,10 @@ func validateCityRequirements(reqs []PackRequirement, agents []Agent) error {
 // mergeFragment merges a fragment into the base config in-place.
 // Arrays concatenate, providers deep-merge, workspace per-field merges.
 func mergeFragment(base, fragment *City, fragMeta toml.MetaData, fragPath string, prov *Provenance) {
-	// Agents: concatenate.
+	// Agents and named sessions: concatenate.
 	trackAgents(prov, fragment.Agents, fragPath)
 	base.Agents = append(base.Agents, fragment.Agents...)
+	base.NamedSessions = append(base.NamedSessions, fragment.NamedSessions...)
 
 	// Rigs: concatenate.
 	trackRigs(prov, fragment.Rigs, fragPath)

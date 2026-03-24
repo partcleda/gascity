@@ -464,6 +464,7 @@ func TestWakeReasons_UsesLegacyAgentLabelTemplate(t *testing.T) {
 
 func TestComputeWorkSet_RunsWorkQuery(t *testing.T) {
 	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
 		Agents: []config.Agent{
 			{Name: "worker"},
 			{Name: "idle", WorkQuery: "bd ready --assignee=idle"},
@@ -471,14 +472,13 @@ func TestComputeWorkSet_RunsWorkQuery(t *testing.T) {
 	}
 
 	runner := func(command, _ string) (string, error) {
-		// worker's default work_query uses $GC_SESSION_NAME env var.
-		if strings.Contains(command, `"$GC_SESSION_NAME"`) {
+		if strings.Contains(command, "GC_SESSION_NAME='worker'") || strings.Contains(command, "GC_SESSION_NAME=worker") {
 			return `[{"id":"BL-42"}]`, nil
 		}
 		return "", nil // empty = no work for idle's custom query
 	}
 
-	work := computeWorkSet(cfg, runner, "/tmp")
+	work := computeWorkSet(cfg, runner, "test-city", "/tmp", nil, nil)
 	if !work["worker"] {
 		t.Error("expected worker to have work")
 	}
@@ -508,7 +508,7 @@ func TestComputeWorkSet_ResolvesRigDir(t *testing.T) {
 		return "", fmt.Errorf("unexpected dir %q, want %q", dir, rigDir)
 	}
 
-	work := computeWorkSet(cfg, runner, cityDir)
+	work := computeWorkSet(cfg, runner, "test-city", cityDir, nil, nil)
 	if !work["myrig/polecat"] {
 		t.Error("expected myrig/polecat to have work when dir is resolved")
 	}
@@ -532,7 +532,7 @@ func TestComputeWorkSet_UsesConfiguredRigRoot(t *testing.T) {
 		return "", fmt.Errorf("unexpected dir %q, want %q", dir, rigDir)
 	}
 
-	work := computeWorkSet(cfg, runner, cityDir)
+	work := computeWorkSet(cfg, runner, "test-city", cityDir, nil, nil)
 	if !work["myrig/polecat"] {
 		t.Error("expected myrig/polecat to have work when rig root is configured externally")
 	}
@@ -542,7 +542,7 @@ func TestComputeWorkSet_NilRunner(t *testing.T) {
 	cfg := &config.City{
 		Agents: []config.Agent{{Name: "worker"}},
 	}
-	work := computeWorkSet(cfg, nil, "/tmp")
+	work := computeWorkSet(cfg, nil, "test-city", "/tmp", nil, nil)
 	if work != nil {
 		t.Errorf("expected nil, got %v", work)
 	}
@@ -557,7 +557,7 @@ func TestComputeWorkSet_CommandError(t *testing.T) {
 		return "", fmt.Errorf("connection refused")
 	}
 
-	work := computeWorkSet(cfg, runner, "/tmp")
+	work := computeWorkSet(cfg, runner, "test-city", "/tmp", nil, nil)
 	if work["worker"] {
 		t.Error("command error should not produce work")
 	}
@@ -572,7 +572,7 @@ func TestComputeWorkSet_IgnoresNoReadyMessage(t *testing.T) {
 		return "✨ No ready work found (all issues have blocking dependencies)\n", nil
 	}
 
-	work := computeWorkSet(cfg, runner, "/tmp")
+	work := computeWorkSet(cfg, runner, "test-city", "/tmp", nil, nil)
 	if work["worker"] {
 		t.Error("no-ready message should not produce work")
 	}
