@@ -198,13 +198,20 @@ func newFormulaCookCmd(stdout, _ io.Writer) *cobra.Command {
 	var title string
 	var vars []string
 	var metadata []string
+	var attach string
 	cmd := &cobra.Command{
 		Use:   "cook <formula-name>",
 		Short: "Instantiate a formula into the current bead store",
 		Long: `Compile and instantiate a formula as real beads in the current store.
 
 This is a low-level workflow construction tool. It creates the formula root
-and all compiled step beads without routing any work.`,
+and all compiled step beads without routing any work.
+
+With --attach=<bead-id>, the sub-DAG is created as children of the given
+bead. The bead gains a blocking dependency on the sub-DAG root, so it won't
+close until the sub-DAG completes. This is the core primitive for late-bound
+DAG expansion — any agent, script, or workflow step can call it to expand a
+bead into a sub-workflow at runtime.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cityPath, err := resolveCity()
@@ -222,6 +229,64 @@ and all compiled step beads without routing any work.`,
 			}
 
 			cookVars := parseFormulaVars(vars)
+
+			if attach != "" {
+				// Graph-attach mode: compile formula, stamp each step with the
+				// parent workflow's gc.root_bead_id, instantiate, wire blocking
+				// dep. The sub-DAG becomes a real part of the workflow graph.
+				parentBead, err := store.Get(attach)
+				if err != nil {
+					return fmt.Errorf("attach bead %s: %w", attach, err)
+				}
+				rootBeadID := parentBead.Metadata["gc.root_bead_id"]
+				if rootBeadID == "" {
+					// The attach bead IS the workflow root
+					rootBeadID = attach
+				}
+				rootStoreRef := parentBead.Metadata["gc.root_store_ref"]
+
+				recipe, err := formula.Compile(cmd.Context(), args[0], cfg.FormulaLayers.City, cookVars)
+				if err != nil {
+					return fmt.Errorf("compile: %w", err)
+				}
+
+				// Stamp every step with the parent workflow's graph metadata
+				for i := range recipe.Steps {
+					if recipe.Steps[i].Metadata == nil {
+						recipe.Steps[i].Metadata = make(map[string]string)
+					}
+					recipe.Steps[i].Metadata["gc.root_bead_id"] = rootBeadID
+					if rootStoreRef != "" {
+						recipe.Steps[i].Metadata["gc.root_store_ref"] = rootStoreRef
+					}
+				}
+
+				result, err := molecule.Instantiate(cmd.Context(), store, recipe, molecule.Options{
+					Title: title,
+					Vars:  cookVars,
+				})
+				if err != nil {
+					return fmt.Errorf("instantiate: %w", err)
+				}
+
+				// Wire blocking dep: attach bead blocks on sub-DAG root
+				if depStore, ok := store.(interface {
+					DepAdd(issueID, dependsOnID, depType string) error
+				}); ok {
+					if err := depStore.DepAdd(attach, result.RootID, "blocks"); err != nil {
+						return fmt.Errorf("dep %s -> %s: %w", attach, result.RootID, err)
+					}
+				}
+
+				_, _ = fmt.Fprintf(stdout, "Attached: %s -> %s (root: %s)\n", attach, result.RootID, rootBeadID)
+				_, _ = fmt.Fprintf(stdout, "Root: %s\n", result.RootID)
+				_, _ = fmt.Fprintf(stdout, "Created: %d\n", result.Created)
+
+				// Poke workflow controller to pick up new beads
+				_ = pokeWorkflowControl(cityPath)
+				return nil
+			}
+
 			result, err := molecule.Cook(cmd.Context(), store, args[0], cfg.FormulaLayers.City, molecule.Options{
 				Title: title,
 				Vars:  cookVars,
@@ -256,6 +321,7 @@ and all compiled step beads without routing any work.`,
 	cmd.Flags().StringVarP(&title, "title", "t", "", "override root bead title")
 	cmd.Flags().StringArrayVar(&vars, "var", nil, "variable substitution for formula (key=value, repeatable)")
 	cmd.Flags().StringArrayVar(&metadata, "meta", nil, "set root bead metadata after cook (key=value, repeatable)")
+	cmd.Flags().StringVar(&attach, "attach", "", "attach sub-DAG to existing bead (bead gains blocking dep on sub-DAG root)")
 	return cmd
 }
 
