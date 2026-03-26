@@ -345,11 +345,18 @@ func findLatestAttempt(store beads.Store, control beads.Bead) (beads.Bead, error
 	var latest beads.Bead
 	latestAttempt := 0
 
+	controlKind := control.Metadata["gc.kind"]
 	for _, b := range all {
-		// Skip control beads.
-		switch b.Metadata["gc.kind"] {
-		case "scope-check", "workflow-finalize", "fanout", "check", "retry-eval", "retry", "ralph", "scope", "workflow":
+		// Skip beads that are control infrastructure, not actual work.
+		// For ralph controls, scope beads ARE the iterations — don't skip them.
+		kind := b.Metadata["gc.kind"]
+		switch kind {
+		case "scope-check", "workflow-finalize", "fanout", "check", "retry-eval", "retry", "ralph", "workflow":
 			continue
+		case "scope":
+			if controlKind != "ralph" {
+				continue
+			}
 		}
 
 		ref := b.Metadata["gc.step_ref"]

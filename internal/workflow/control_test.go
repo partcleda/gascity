@@ -537,3 +537,42 @@ func TestFindLatestAttemptDirectRef(t *testing.T) {
 
 // Unused import guard.
 var _ = strconv.Itoa
+
+func TestFindLatestAttemptRalphIteration(t *testing.T) {
+	t.Parallel()
+	store := beads.NewMemStore()
+
+	root := mustCreate(t, store, beads.Bead{
+		Title:    "workflow",
+		Metadata: map[string]string{"gc.kind": "workflow"},
+	})
+
+	control := mustCreate(t, store, beads.Bead{
+		Title: "self-review ralph",
+		Metadata: map[string]string{
+			"gc.kind":         "ralph",
+			"gc.root_bead_id": root.ID,
+			"gc.step_ref":     "mol-demo.self-review",
+			"gc.step_id":      "self-review",
+		},
+	})
+
+	iteration := mustCreate(t, store, beads.Bead{
+		Title: "self-review iteration 1",
+		Metadata: map[string]string{
+			"gc.kind":         "scope",
+			"gc.root_bead_id": root.ID,
+			"gc.step_ref":     "mol-demo.self-review.iteration.1",
+			"gc.attempt":      "1",
+		},
+	})
+	mustClose(t, store, iteration.ID)
+
+	found, err := findLatestAttempt(store, mustGet(t, store, control.ID))
+	if err != nil {
+		t.Fatalf("findLatestAttempt: %v", err)
+	}
+	if found.ID != iteration.ID {
+		t.Fatalf("findLatestAttempt returned %q, want %q (scope iteration)", found.ID, iteration.ID)
+	}
+}
