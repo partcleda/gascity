@@ -133,12 +133,30 @@ func resolveTemplate(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName 
 	tmplName := templateNameFor(cfgAgent, qualifiedName)
 	sessName := p.resolveSessionName(qualifiedName, tmplName)
 
-	// Step 7: Derive session bead ID for traceability.
-	// Bead-derived session names have the form "s-{beadID}". Extract the
-	// bead ID so BEADS_ACTOR and GC_SESSION_ID use it for log lookup.
-	sessionBeadID := sessName
-	if strings.HasPrefix(sessName, "s-") {
-		sessionBeadID = strings.TrimPrefix(sessName, "s-")
+	// Step 7: Resolve session bead ID for traceability.
+	// Look up the session bead by session_name to get the bead ID (e.g., mc-cnf).
+	// This is what MC uses to link beads → session logs.
+	sessionBeadID := ""
+	if p.sessionBeads != nil {
+		for _, b := range p.sessionBeads.Open() {
+			if b.Metadata["session_name"] == sessName {
+				sessionBeadID = b.ID
+				break
+			}
+		}
+	}
+	if sessionBeadID == "" && p.beadStore != nil {
+		if all, err := p.beadStore.ListByLabel("gc:session", 0); err == nil {
+			for _, b := range all {
+				if b.Status != "closed" && b.Metadata["session_name"] == sessName {
+					sessionBeadID = b.ID
+					break
+				}
+			}
+		}
+	}
+	if sessionBeadID == "" {
+		sessionBeadID = qualifiedName
 	}
 
 	// Step 8: Build agent environment.
