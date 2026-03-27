@@ -246,16 +246,23 @@ func spawnNextAttempt(ctx context.Context, store beads.Store, control beads.Bead
 // buildAttemptRecipe constructs a minimal formula.Recipe for one attempt
 // from the frozen step spec.
 func buildAttemptRecipe(step *formula.Step, control beads.Bead, attemptNum int) *formula.Recipe {
+	// stepID is the bare logical ID for metadata grouping.
 	stepID := control.Metadata["gc.step_id"]
 	if stepID == "" {
 		stepID = control.ID
 	}
+	// stepRef is the fully namespaced ref (e.g., mol-demo-v2.self-review)
+	// so Attach-created beads match the same namespace as compiler-created ones.
+	stepRef := control.Metadata["gc.step_ref"]
+	if stepRef == "" {
+		stepRef = stepID
+	}
 
 	var attemptPrefix string
 	if step.Ralph != nil {
-		attemptPrefix = fmt.Sprintf("%s.iteration.%d", stepID, attemptNum)
+		attemptPrefix = fmt.Sprintf("%s.iteration.%d", stepRef, attemptNum)
 	} else {
-		attemptPrefix = fmt.Sprintf("%s.attempt.%d", stepID, attemptNum)
+		attemptPrefix = fmt.Sprintf("%s.attempt.%d", stepRef, attemptNum)
 	}
 
 	// Root step for the attempt sub-DAG.
