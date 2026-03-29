@@ -290,12 +290,17 @@ func resolveTemplate(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName 
 // produce identical output.
 func templateParamsToConfig(tp TemplateParams) runtime.Config {
 	var promptSuffix string
+	var promptFlag string
 	if tp.Prompt != "" {
 		promptSuffix = shellquote.Quote(tp.Prompt)
+		if tp.ResolvedProvider != nil && tp.ResolvedProvider.PromptMode == "flag" && tp.ResolvedProvider.PromptFlag != "" {
+			promptFlag = tp.ResolvedProvider.PromptFlag
+		}
 	}
 	return runtime.Config{
 		Command:                tp.Command,
 		PromptSuffix:           promptSuffix,
+		PromptFlag:             promptFlag,
 		Env:                    tp.Env,
 		WorkDir:                tp.WorkDir,
 		ReadyPromptPrefix:      tp.Hints.ReadyPromptPrefix,
