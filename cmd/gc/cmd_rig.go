@@ -262,11 +262,7 @@ func doRigAdd(fs fsys.FS, cityPath, rigPath, include, nameOverride string, start
 			rig.Includes = append([]string{}, cfg.Workspace.DefaultRigIncludes...)
 		}
 		cfg.Rigs = append(cfg.Rigs, rig)
-		cityName := cfg.Workspace.Name
-		if cityName == "" {
-			cityName = filepath.Base(cityPath)
-		}
-		if err := config.ValidateRigs(cfg.Rigs, cityName); err != nil {
+		if err := config.ValidateRigs(cfg.Rigs, config.EffectiveHQPrefix(cfg)); err != nil {
 			fmt.Fprintf(stderr, "gc rig add: %v\n", err) //nolint:errcheck // best-effort stderr
 			return 1
 		}
@@ -388,11 +384,7 @@ func doRigList(fs fsys.FS, cityPath string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	cityName := cfg.Workspace.Name
-	if cityName == "" {
-		cityName = filepath.Base(cityPath)
-	}
-	hqPrefix := config.DeriveBeadsPrefix(cityName)
+	hqPrefix := config.EffectiveHQPrefix(cfg)
 
 	w := func(s string) { fmt.Fprintln(stdout, s) } //nolint:errcheck // best-effort stdout
 	w("")
@@ -400,8 +392,12 @@ func doRigList(fs fsys.FS, cityPath string, stdout, stderr io.Writer) int {
 
 	// HQ rig (the city itself).
 	hqBeads := rigBeadsStatus(fs, cityPath)
+	displayName := cfg.Workspace.Name
+	if displayName == "" {
+		displayName = filepath.Base(cityPath)
+	}
 	w("")
-	w(fmt.Sprintf("  %s (HQ):", cityName))
+	w(fmt.Sprintf("  %s (HQ):", displayName))
 	w(fmt.Sprintf("    Prefix: %s", hqPrefix))
 	w(fmt.Sprintf("    Beads:  %s", hqBeads))
 
