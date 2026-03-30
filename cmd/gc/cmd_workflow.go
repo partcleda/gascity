@@ -356,16 +356,16 @@ func cmdWorkflowDelete(workflowID string, force, deleteBeads bool, stdout, stder
 
 	type storeMatch struct {
 		store   beads.Store
-		ids     []string
+		beads   []beads.Bead
 		label   string
 		rigPath string // for shelling out to bd delete
 	}
 	var matches []storeMatch
 
 	if cityStore, err := openStoreAtForCity(cityPath, cityPath); err == nil {
-		ids := findWorkflowBeadIDs(cityStore, workflowID)
-		if len(ids) > 0 {
-			matches = append(matches, storeMatch{store: cityStore, ids: ids, label: "city", rigPath: cityPath})
+		found := findWorkflowBeads(cityStore, workflowID)
+		if len(found) > 0 {
+			matches = append(matches, storeMatch{store: cityStore, beads: found, label: "city", rigPath: cityPath})
 		}
 	}
 	for _, rig := range cfg.Rigs {
@@ -373,28 +373,25 @@ func cmdWorkflowDelete(workflowID string, force, deleteBeads bool, stdout, stder
 		if err != nil {
 			continue
 		}
-		ids := findWorkflowBeadIDs(rigStore, workflowID)
-		if len(ids) > 0 {
-			matches = append(matches, storeMatch{store: rigStore, ids: ids, label: "rig:" + rig.Name, rigPath: rig.Path})
+		found := findWorkflowBeads(rigStore, workflowID)
+		if len(found) > 0 {
+			matches = append(matches, storeMatch{store: rigStore, beads: found, label: "rig:" + rig.Name, rigPath: rig.Path})
 		}
 	}
 
 	total := 0
+	openCount := 0
 	for _, m := range matches {
-		total += len(m.ids)
+		total += len(m.beads)
+		for _, b := range m.beads {
+			if b.Status != "closed" {
+				openCount++
+			}
+		}
 	}
 	if total == 0 {
 		fmt.Fprintf(stderr, "gc workflow delete: no beads found for workflow %s\n", workflowID)
 		return 1
-	}
-
-	openCount := 0
-	for _, m := range matches {
-		for _, id := range m.ids {
-			if b, err := m.store.Get(id); err == nil && b.Status != "closed" {
-				openCount++
-			}
-		}
 	}
 
 	action := "close"
@@ -403,7 +400,7 @@ func cmdWorkflowDelete(workflowID string, force, deleteBeads bool, stdout, stder
 	}
 	fmt.Fprintf(stdout, "Workflow %s: %d beads (%d open) — %s\n", workflowID, total, openCount, action)
 	for _, m := range matches {
-		fmt.Fprintf(stdout, "  %s: %d beads\n", m.label, len(m.ids))
+		fmt.Fprintf(stdout, "  %s: %d beads\n", m.label, len(m.beads))
 	}
 
 	if !force {
@@ -414,7 +411,8 @@ func cmdWorkflowDelete(workflowID string, force, deleteBeads bool, stdout, stder
 	// Phase 1: Batch close all open beads with gc.outcome=skipped.
 	closed := 0
 	for _, m := range matches {
-		n, _ := m.store.CloseAll(m.ids, map[string]string{"gc.outcome": "skipped"})
+		ids := workflowBeadIDs(m.beads)
+		n, _ := m.store.CloseAll(ids, map[string]string{"gc.outcome": "skipped"})
 		closed += n
 	}
 	fmt.Fprintf(stdout, "Closed %d open beads\n", closed)
@@ -423,32 +421,46 @@ func cmdWorkflowDelete(workflowID string, force, deleteBeads bool, stdout, stder
 		return 0
 	}
 
-	// Phase 2: Delete via bd delete --force (handles dep cleanup, events, etc.)
+	// Phase 2: Batch delete with --cascade in a single bd subprocess call.
+	// The first-level children (found via gc.root_bead_id metadata) are passed
+	// as args; --cascade follows the dependency chain to pick up any deeper
+	// beads linked via the dependencies table.
 	deleted := 0
 	for _, m := range matches {
+		ids := workflowBeadIDs(m.beads)
 		runner := bdCommandRunnerForCity(cityPath)
-		for _, id := range m.ids {
-			if _, err := runner(m.rigPath, "bd", "delete", id, "--force"); err != nil {
-				fmt.Fprintf(stderr, "  delete %s: %v\n", id, err)
-				continue
-			}
-			deleted++
+		args := append([]string{"delete"}, ids...)
+		args = append(args, "--cascade", "--force")
+		if _, err := runner(m.rigPath, "bd", args...); err != nil {
+			fmt.Fprintf(stderr, "  batch delete: %v\n", err)
+			continue
 		}
+		deleted += len(ids)
 	}
 	fmt.Fprintf(stdout, "Deleted %d beads\n", deleted)
 	return 0
 }
 
-func findWorkflowBeadIDs(store beads.Store, workflowID string) []string {
+// findWorkflowBeads returns all beads belonging to a workflow: the root bead
+// plus any bead whose gc.root_bead_id metadata matches the workflow ID.
+func findWorkflowBeads(store beads.Store, workflowID string) []beads.Bead {
 	all, err := store.List()
 	if err != nil {
 		return nil
 	}
-	var ids []string
+	var result []beads.Bead
 	for _, b := range all {
 		if b.ID == workflowID || b.Metadata["gc.root_bead_id"] == workflowID {
-			ids = append(ids, b.ID)
+			result = append(result, b)
 		}
+	}
+	return result
+}
+
+func workflowBeadIDs(bb []beads.Bead) []string {
+	ids := make([]string, len(bb))
+	for i, b := range bb {
+		ids[i] = b.ID
 	}
 	return ids
 }
