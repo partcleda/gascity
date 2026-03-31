@@ -680,17 +680,25 @@ func TestRegression_ManualSessionNotDrained(t *testing.T) {
 	assertAwake(t, result, "s-mc-1")
 }
 
+func TestRegression_OnDemandRefineryAssignee(t *testing.T) {
+	result := ComputeAwakeSet(AwakeInput{
+		Agents:        []AwakeAgent{{QualifiedName: "hello-world/refinery"}},
+		NamedSessions: []AwakeNamedSession{{Identity: "hello-world/refinery", Template: "hello-world/refinery", Mode: "on_demand"}},
+		SessionBeads:  []AwakeSessionBead{{ID: "mc-1", SessionName: "hello-world--refinery", Template: "hello-world/refinery", State: "asleep", NamedIdentity: "hello-world/refinery"}},
+		WorkBeads:     []AwakeWorkBead{{ID: "hw-1", Assignee: "hello-world/refinery", Status: "open"}},
+		Now:           now,
+	})
+	assertAwake(t, result, "hello-world--refinery")
+}
+
 func TestRegression_PolecatWithInProgressWork_StaysAwake(t *testing.T) {
-	// Bug: polecat had IN_PROGRESS work assigned to its session bead ID,
-	// but scaleCheck returned 0 (no unassigned work). The polecat was
-	// drained with "no-wake-reason" while actively working.
 	result := ComputeAwakeSet(AwakeInput{
 		Agents: []AwakeAgent{{QualifiedName: "hello-world/polecat"}},
 		SessionBeads: []AwakeSessionBead{
 			{ID: "mc-p1", SessionName: "polecat-mc-p1", Template: "hello-world/polecat", State: "active"},
 		},
 		WorkBeads:        []AwakeWorkBead{{ID: "hw-1", Assignee: "mc-p1", Status: "in_progress"}},
-		ScaleCheckCounts: map[string]int{"hello-world/polecat": 0}, // no NEW work, but has assigned work
+		ScaleCheckCounts: map[string]int{"hello-world/polecat": 0},
 		RunningSessions:  map[string]bool{"polecat-mc-p1": true},
 		Now:              now,
 	})
@@ -698,7 +706,6 @@ func TestRegression_PolecatWithInProgressWork_StaysAwake(t *testing.T) {
 }
 
 func TestRegression_SessionWithOpenWorkByBeadID_StaysAwake(t *testing.T) {
-	// Work bead assigned to session bead ID (not alias) with status=open.
 	result := ComputeAwakeSet(AwakeInput{
 		Agents: []AwakeAgent{{QualifiedName: "hello-world/polecat"}},
 		SessionBeads: []AwakeSessionBead{
@@ -713,7 +720,6 @@ func TestRegression_SessionWithOpenWorkByBeadID_StaysAwake(t *testing.T) {
 }
 
 func TestRegression_SessionWithWorkByAlias_StaysAwake(t *testing.T) {
-	// Work bead assigned to session's template/alias (not bead ID).
 	result := ComputeAwakeSet(AwakeInput{
 		Agents: []AwakeAgent{{QualifiedName: "hello-world/polecat"}},
 		SessionBeads: []AwakeSessionBead{
@@ -725,15 +731,4 @@ func TestRegression_SessionWithWorkByAlias_StaysAwake(t *testing.T) {
 		Now:              now,
 	})
 	assertAwake(t, result, "polecat-mc-p1")
-}
-
-func TestRegression_OnDemandRefineryAssignee(t *testing.T) {
-	result := ComputeAwakeSet(AwakeInput{
-		Agents:        []AwakeAgent{{QualifiedName: "hello-world/refinery"}},
-		NamedSessions: []AwakeNamedSession{{Identity: "hello-world/refinery", Template: "hello-world/refinery", Mode: "on_demand"}},
-		SessionBeads:  []AwakeSessionBead{{ID: "mc-1", SessionName: "hello-world--refinery", Template: "hello-world/refinery", State: "asleep", NamedIdentity: "hello-world/refinery"}},
-		WorkBeads:     []AwakeWorkBead{{ID: "hw-1", Assignee: "hello-world/refinery", Status: "open"}},
-		Now:           now,
-	})
-	assertAwake(t, result, "hello-world--refinery")
 }

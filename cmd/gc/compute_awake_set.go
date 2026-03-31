@@ -51,7 +51,6 @@ type AwakeSessionBead struct {
 	HeldUntil        time.Time // zero = not held
 	QuarantinedUntil time.Time // zero = not quarantined
 	IdleSince        time.Time // zero = unknown/not idle
-	IdleLatched      bool      // asleep with sleep_reason="idle" — remains asleep until policy changes
 }
 
 // AwakeWorkBead represents a work bead with an assignee.
@@ -141,19 +140,6 @@ func ComputeAwakeSet(input AwakeInput) map[string]AwakeDecision {
 			desired[bead.SessionName] = "scaled:creating"
 			filled++
 		}
-		// Asleep sessions fill remaining demand when active + creating
-		// are insufficient. This ensures sessions can be re-woken after
-		// idle sleep or crash recovery.
-		if filled < count {
-			asleep := collectAsleepBeads(input.SessionBeads, template)
-			for _, bead := range asleep {
-				if filled >= count {
-					break
-				}
-				desired[bead.SessionName] = "scaled:asleep"
-				filled++
-			}
-		}
 	}
 
 	// Manual sessions
@@ -177,10 +163,7 @@ func ComputeAwakeSet(input AwakeInput) map[string]AwakeDecision {
 		}
 		for _, wb := range input.WorkBeads {
 			assignee := strings.TrimSpace(wb.Assignee)
-			if assignee == "" {
-				continue
-			}
-			if wb.Status != "open" && wb.Status != "in_progress" {
+			if assignee == "" || (wb.Status != "open" && wb.Status != "in_progress") {
 				continue
 			}
 			if assignee == bead.ID || assignee == bead.Template {
@@ -249,29 +232,19 @@ func ComputeAwakeSet(input AwakeInput) map[string]AwakeDecision {
 			decision.Reason = "quarantined"
 		}
 
-		// Dependency gate: block wake when a dependency has no running
-		// session and is not itself desired to wake. When the dep is
-		// desired (in the desired set or running), both can proceed in
-		// the same tick — executePlannedStarts handles wave-based
-		// ordering via allDependenciesAliveForTemplate.
+		// Dependency gate
 		if decision.ShouldWake {
 			agent, ok := agentsByName[bead.Template]
 			if ok && len(agent.DependsOn) > 0 {
 				for _, dep := range agent.DependsOn {
-					depSatisfied := false
+					depRunning := false
 					for _, other := range input.SessionBeads {
-						if other.Template == dep {
-							if input.RunningSessions[other.SessionName] {
-								depSatisfied = true
-								break
-							}
-							if _, inDesired := desired[other.SessionName]; inDesired {
-								depSatisfied = true
-								break
-							}
+						if other.Template == dep && input.RunningSessions[other.SessionName] {
+							depRunning = true
+							break
 						}
 					}
-					if !depSatisfied {
+					if !depRunning {
 						decision.ShouldWake = false
 						decision.Reason = "dependency-not-running:" + dep
 						break
@@ -337,16 +310,6 @@ func collectCreatingBeads(beads []AwakeSessionBead, template string) []AwakeSess
 	var result []AwakeSessionBead
 	for _, b := range beads {
 		if b.Template == template && b.State == "creating" && !b.ManualSession && !b.Drained && !b.DependencyOnly {
-			result = append(result, b)
-		}
-	}
-	return result
-}
-
-func collectAsleepBeads(beads []AwakeSessionBead, template string) []AwakeSessionBead {
-	var result []AwakeSessionBead
-	for _, b := range beads {
-		if b.Template == template && b.State == "asleep" && !b.ManualSession && !b.Drained && !b.DependencyOnly && !b.IdleLatched {
 			result = append(result, b)
 		}
 	}
