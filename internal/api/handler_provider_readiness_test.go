@@ -158,6 +158,8 @@ func TestProbeCommandEnvUsesCuratedProbePath(t *testing.T) {
 		"/usr/bin",
 		"/bin",
 		"/snap/bin",
+		"/home/linuxbrew/.linuxbrew/bin",
+		"/home/linuxbrew/.linuxbrew/sbin",
 	}, string(os.PathListSeparator))
 	if !slices.Contains(env, wantPath) {
 		t.Fatalf("probeCommandEnv missing curated PATH %q in %v", wantPath, env)
