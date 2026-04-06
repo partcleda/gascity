@@ -24,6 +24,12 @@ type DesiredStateResult struct {
 	State             map[string]TemplateParams
 	ScaleCheckCounts  map[string]int // nil when store is nil or scale_check not run
 	AssignedWorkBeads []beads.Bead   // actionable assigned work: in_progress or ready+assigned
+	// NamedSessionDemand records which named-session identities have active
+	// demand — either direct assignee demand (Assignee == identity) or
+	// work_query-detected ready work. The reconciler merges this into
+	// poolDesired so that on-demand named sessions remain config-eligible
+	// even when no gc.routed_to metadata exists for the template.
+	NamedSessionDemand map[string]bool
 	// StoreQueryPartial is true when one or more bead store queries failed
 	// during collectAssignedWorkBeads. When set, the reconciler must NOT
 	// drain sessions based on the (incomplete) desired state — a transient
@@ -380,7 +386,7 @@ func buildDesiredStateWithSessionBeads(
 	realizedRoots := discoverSessionBeadsWithRoots(bp, cfg, desired, suspendedRigPaths, stderr)
 	realizeDependencyFloors(bp, cfg, desired, realizedRoots, suspendedRigPaths, stderr)
 
-	return DesiredStateResult{State: desired, ScaleCheckCounts: scaleCheckCounts, AssignedWorkBeads: assignedWorkBeads, StoreQueryPartial: storePartial}
+	return DesiredStateResult{State: desired, ScaleCheckCounts: scaleCheckCounts, AssignedWorkBeads: assignedWorkBeads, NamedSessionDemand: namedWorkReady, StoreQueryPartial: storePartial}
 }
 
 // collectAssignedWorkBeads queries each store (city + rigs) for actionable
@@ -428,6 +434,31 @@ func collectAssignedWorkBeads(
 		}
 	}
 	return result, partial
+}
+
+// mergeNamedSessionDemand ensures that named-session assignee demand is
+// reflected in poolDesired so downstream consumers (sessionWithinDesiredConfig,
+// WakeConfig decisions) recognize the session as config-eligible. Without this,
+// a bead with Assignee=identity but no gc.routed_to would materialize the
+// session (via namedWorkReady) but leave poolDesired at 0, causing the
+// reconciler to treat it as having no config demand.
+func mergeNamedSessionDemand(poolDesired map[string]int, namedDemand map[string]bool, cfg *config.City) {
+	for identity, ready := range namedDemand {
+		if !ready {
+			continue
+		}
+		// Resolve the identity to its backing agent template. cityName is
+		// intentionally empty — we only need spec.Agent.QualifiedName(),
+		// not spec.SessionName.
+		spec, ok := findNamedSessionSpec(cfg, "", identity)
+		if !ok {
+			continue
+		}
+		template := spec.Agent.QualifiedName()
+		if poolDesired[template] < 1 {
+			poolDesired[template] = 1
+		}
+	}
 }
 
 func appendAssignedUnique(dst *[]beads.Bead, beadList []beads.Bead, seen map[string]struct{}) {
