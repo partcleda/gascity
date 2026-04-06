@@ -878,7 +878,7 @@ func stopTargetsForNames(names []string, cfg *config.City, store beads.Store, st
 						subject = name
 					}
 					sessionSubjects[name] = subject
-					if bead.Metadata[poolManagedMetadataKey] == boolMetadata(true) {
+					if isPoolManagedSessionBead(bead) {
 						sessionPoolManaged[name] = true
 					}
 				}

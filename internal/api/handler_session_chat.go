@@ -209,6 +209,8 @@ func writeSessionManagerError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "conflict", err.Error())
 	case errors.Is(err, session.ErrNotSession):
 		writeError(w, http.StatusBadRequest, "invalid", err.Error())
+	case errors.Is(err, session.ErrPoolManaged):
+		writeError(w, http.StatusConflict, "pool_managed", err.Error())
 	default:
 		writeStoreError(w, err)
 	}

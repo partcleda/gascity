@@ -1956,7 +1956,7 @@ func TestStopTurnInterruptsActiveSession(t *testing.T) {
 	}
 }
 
-func TestStopTurnSkipsPoolManagedSession(t *testing.T) {
+func TestStopTurnRejectsPoolManagedSession(t *testing.T) {
 	store := beads.NewMemStore()
 	sp := runtime.NewFake()
 	mgr := NewManager(store, sp)
@@ -1972,13 +1972,42 @@ func TestStopTurnSkipsPoolManagedSession(t *testing.T) {
 		t.Fatalf("Update: %v", err)
 	}
 
-	if err := mgr.StopTurn(info.ID); err != nil {
-		t.Fatalf("StopTurn: %v", err)
+	err = mgr.StopTurn(info.ID)
+	if !errors.Is(err, ErrPoolManaged) {
+		t.Fatalf("StopTurn = %v, want ErrPoolManaged", err)
 	}
 
 	for _, call := range sp.Calls {
 		if call.Method == "Interrupt" {
 			t.Fatalf("pool-managed session should not receive Interrupt, got call for %q", call.Name)
+		}
+	}
+}
+
+func TestStopTurnRejectsPoolSlotOnlySession(t *testing.T) {
+	store := beads.NewMemStore()
+	sp := runtime.NewFake()
+	mgr := NewManager(store, sp)
+
+	info, err := mgr.Create(context.Background(), "pool-slot-worker", "", "claude", "/tmp", "claude", nil, ProviderResume{}, runtime.Config{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	// Mark the session bead with pool_slot only (no pool_managed).
+	if err := store.Update(info.ID, beads.UpdateOpts{
+		Metadata: map[string]string{"pool_slot": "1"},
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	err = mgr.StopTurn(info.ID)
+	if !errors.Is(err, ErrPoolManaged) {
+		t.Fatalf("StopTurn = %v, want ErrPoolManaged for pool_slot-only bead", err)
+	}
+
+	for _, call := range sp.Calls {
+		if call.Method == "Interrupt" {
+			t.Fatalf("pool-slot session should not receive Interrupt, got call for %q", call.Name)
 		}
 	}
 }
