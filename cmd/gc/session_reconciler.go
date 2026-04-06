@@ -337,6 +337,34 @@ func reconcileSessionBeadsTraced(
 			continue
 		}
 
+		// Drain-ack: agent signaled it's done (gc runtime drain-ack).
+		// Honor the ack even if the agent exited before this tick; otherwise
+		// the session falls through to orphan handling and can block the next
+		// worker wave until the stale awake bead ages out.
+		if dops != nil {
+			if acked, _ := dops.isDrainAcked(name); acked {
+				_ = dops.clearDrain(name)
+				if alive {
+					if err := sp.Stop(name); err != nil {
+						fmt.Fprintf(stderr, "session reconciler: stopping drain-acked %s: %v\n", name, err) //nolint:errcheck
+					} else {
+						fmt.Fprintf(stdout, "Stopped drain-acked session '%s'\n", name) //nolint:errcheck
+					}
+				}
+				rec.Record(events.Event{
+					Type:    events.SessionStopped,
+					Actor:   "gc",
+					Subject: tp.DisplayName(),
+					Message: "drain acknowledged by agent",
+				})
+				if store != nil && session.ID != "" {
+					_ = store.SetMetadata(session.ID, "state", "drained")
+					session.Metadata["state"] = "drained"
+				}
+				continue
+			}
+		}
+
 		policy := resolveSessionSleepPolicy(*session, cfg, sp)
 
 		// Heal advisory state metadata.
@@ -358,32 +386,6 @@ func reconcileSessionBeadsTraced(
 		if alive && shouldRollbackPendingCreate(session) {
 			if err := clearPendingCreateClaim(session, store); err != nil {
 				fmt.Fprintf(stderr, "session reconciler: clearing pending create claim for %s: %v\n", name, err) //nolint:errcheck
-			}
-		}
-
-		// Drain-ack: agent signaled it's done (gc runtime drain-ack).
-		// Stop the session and close its bead. The bead becomes a permanent
-		// historical record of this incarnation. The next work item gets a
-		// brand-new session bead with a fresh session key and clean context.
-		if alive && dops != nil {
-			if acked, _ := dops.isDrainAcked(name); acked {
-				_ = dops.clearDrain(name)
-				if err := sp.Stop(name); err != nil {
-					fmt.Fprintf(stderr, "session reconciler: stopping drain-acked %s: %v\n", name, err) //nolint:errcheck
-				} else {
-					fmt.Fprintf(stdout, "Stopped drain-acked session '%s'\n", name) //nolint:errcheck
-					rec.Record(events.Event{
-						Type:    events.SessionStopped,
-						Actor:   "gc",
-						Subject: tp.DisplayName(),
-						Message: "drain acknowledged by agent",
-					})
-				}
-				if store != nil && session.ID != "" {
-					_ = store.SetMetadata(session.ID, "state", "drained")
-					session.Metadata["state"] = "drained"
-				}
-				continue
 			}
 		}
 

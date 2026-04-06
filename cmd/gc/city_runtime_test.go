@@ -266,6 +266,61 @@ func TestCityRuntimeBeadReconcileTick_KeepsAssignedPoolWorkerAwake(t *testing.T)
 	}
 }
 
+func TestControlDispatcherOnlyConfig_IncludesRigScopedDispatchers(t *testing.T) {
+	cfg := &config.City{
+		Agents: []config.Agent{
+			{Name: "claude"},
+			{Name: config.ControlDispatcherAgentName},
+			{Name: config.ControlDispatcherAgentName, Dir: "gascity"},
+		},
+	}
+
+	filtered := controlDispatcherOnlyConfig(cfg)
+	if filtered == nil {
+		t.Fatal("filtered config = nil")
+	}
+	if len(filtered.Agents) != 2 {
+		t.Fatalf("len(filtered.Agents) = %d, want 2", len(filtered.Agents))
+	}
+	if filtered.Agents[0].QualifiedName() != "control-dispatcher" {
+		t.Fatalf("filtered city dispatcher = %q, want control-dispatcher", filtered.Agents[0].QualifiedName())
+	}
+	if filtered.Agents[1].QualifiedName() != "gascity/control-dispatcher" {
+		t.Fatalf("filtered rig dispatcher = %q, want gascity/control-dispatcher", filtered.Agents[1].QualifiedName())
+	}
+}
+
+func TestCityRuntimeBuildDesiredState_StandaloneIncludesRigStores(t *testing.T) {
+	cityStore := beads.NewMemStore()
+	rigStore := beads.NewMemStore()
+	var gotRigStores map[string]beads.Store
+
+	cr := &CityRuntime{
+		cityPath:            t.TempDir(),
+		cityName:            "maintainer-city",
+		cfg:                 &config.City{Rigs: []config.Rig{{Name: "gascity"}}},
+		sp:                  runtime.NewFake(),
+		standaloneCityStore: cityStore,
+		standaloneRigStores: map[string]beads.Store{"gascity": rigStore},
+		buildFnWithSessionBeads: func(_ *config.City, _ runtime.Provider, store beads.Store, rigStores map[string]beads.Store, _ *sessionBeadSnapshot, _ *sessionReconcilerTraceCycle) DesiredStateResult {
+			if store != cityStore {
+				t.Fatalf("store = %v, want city store", store)
+			}
+			gotRigStores = rigStores
+			return DesiredStateResult{State: map[string]TemplateParams{}}
+		},
+	}
+
+	cr.buildDesiredState(nil, nil)
+
+	if len(gotRigStores) != 1 {
+		t.Fatalf("len(rigStores) = %d, want 1", len(gotRigStores))
+	}
+	if gotRigStores["gascity"] != rigStore {
+		t.Fatalf("rigStores[gascity] = %v, want rig store", gotRigStores["gascity"])
+	}
+}
+
 func TestCityRuntimeReloadProviderSwapPreservesDrainTracker(t *testing.T) {
 	cityPath := t.TempDir()
 	tomlPath := filepath.Join(cityPath, "city.toml")

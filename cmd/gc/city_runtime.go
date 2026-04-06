@@ -55,6 +55,7 @@ type CityRuntime struct {
 	suspendedNames    map[string]bool
 
 	standaloneCityStore beads.Store // non-nil when API disabled; for chat auto-suspend
+	standaloneRigStores map[string]beads.Store
 
 	// Bead-driven reconciler state (Phase 2f).
 	sessionDrains *drainTracker // in-memory drain tracker; nil when bead reconciler disabled
@@ -223,6 +224,7 @@ func (cr *CityRuntime) run(ctx context.Context) {
 		} else {
 			cr.standaloneCityStore = store
 		}
+		cr.standaloneRigStores = buildStandaloneRigStores(cr.cfg, cr.cityPath, cr.stderr)
 	}
 
 	// Record bead store health metric.
@@ -607,6 +609,7 @@ func (cr *CityRuntime) reloadConfigTraced(
 		} else {
 			cr.standaloneCityStore = s
 		}
+		cr.standaloneRigStores = buildStandaloneRigStores(nextCfg, cr.cityPath, cr.stderr)
 	}
 
 	// Ensure drain tracker is initialized when bead store becomes available.
@@ -850,7 +853,7 @@ func (cr *CityRuntime) controlDispatcherTick(ctx context.Context) {
 		filteredCfg,
 		cr.sp,
 		store,
-		nil,
+		cr.rigBeadStores(),
 		sessionBeads,
 		nil,
 		cr.stderr,
@@ -918,6 +921,15 @@ func (cr *CityRuntime) cityBeadStore() beads.Store {
 	return cr.standaloneCityStore
 }
 
+func (cr *CityRuntime) rigBeadStores() map[string]beads.Store {
+	if cr.cs != nil {
+		stores := cr.cs.BeadStores()
+		delete(stores, cr.cityName)
+		return stores
+	}
+	return cr.standaloneRigStores
+}
+
 func (cr *CityRuntime) loadSessionBeadSnapshot() *sessionBeadSnapshot {
 	store := cr.cityBeadStore()
 	if store == nil {
@@ -946,14 +958,30 @@ func filterSessionBeadsByName(snapshot *sessionBeadSnapshot, names map[string]bo
 
 func (cr *CityRuntime) buildDesiredState(sessionBeads *sessionBeadSnapshot, trace *sessionReconcilerTraceCycle) DesiredStateResult {
 	store := cr.cityBeadStore()
-	var rigStores map[string]beads.Store
-	if cr.cs != nil {
-		rigStores = cr.cs.BeadStores()
-	}
+	rigStores := cr.rigBeadStores()
 	if cr.buildFnWithSessionBeads != nil {
 		return cr.buildFnWithSessionBeads(cr.cfg, cr.sp, store, rigStores, sessionBeads, trace)
 	}
 	return cr.buildFn(cr.cfg, cr.sp, store)
+}
+
+func buildStandaloneRigStores(cfg *config.City, cityPath string, stderr io.Writer) map[string]beads.Store {
+	if cfg == nil || len(cfg.Rigs) == 0 {
+		return nil
+	}
+	stores := make(map[string]beads.Store, len(cfg.Rigs))
+	for _, rig := range cfg.Rigs {
+		store, err := openStoreAtForCity(rig.Path, cityPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "gc supervisor: rig bead store %q: %v\n", rig.Name, err) //nolint:errcheck // best-effort stderr
+			continue
+		}
+		stores[rig.Name] = store
+	}
+	if len(stores) == 0 {
+		return nil
+	}
+	return stores
 }
 
 func (cr *CityRuntime) beginTraceCycle(trigger, detail string, sessionBeads *sessionBeadSnapshot) *sessionReconcilerTraceCycle {

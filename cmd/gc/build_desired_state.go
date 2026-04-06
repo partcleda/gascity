@@ -438,14 +438,19 @@ func controlDispatcherOnlyConfig(cfg *config.City) *config.City {
 	if cfg == nil {
 		return nil
 	}
-	// Only include city-scoped control-dispatcher. Rig-scoped instances are
-	// handled by the main reconcile loop which has per-rig stores.
-	agentCfg, ok := resolveAgentIdentity(cfg, config.ControlDispatcherAgentName, "")
-	if !ok {
+	// Include every configured control-dispatcher so standalone mode can
+	// recover rig-scoped dispatcher instances as well as the city one.
+	var agents []config.Agent
+	for _, agentCfg := range cfg.Agents {
+		if agentCfg.Name == config.ControlDispatcherAgentName {
+			agents = append(agents, agentCfg)
+		}
+	}
+	if len(agents) == 0 {
 		return nil
 	}
 	cfgCopy := *cfg
-	cfgCopy.Agents = []config.Agent{agentCfg}
+	cfgCopy.Agents = agents
 	return &cfgCopy
 }
 
