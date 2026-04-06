@@ -53,6 +53,7 @@ func newRigAddCmd(stdout, stderr io.Writer) *cobra.Command {
 	var include string
 	var startSuspended bool
 	var nameFlag string
+	var prefixFlag string
 	cmd := &cobra.Command{
 		Use:   "add <path>",
 		Short: "Register a project as a rig",
@@ -64,15 +65,17 @@ If the target directory doesn't exist, it is created. Use --include
 to apply a pack directory that defines the rig's agent configuration.
 
 Use --name to set the rig name explicitly (default: directory basename).
+Use --prefix to set the bead ID prefix explicitly (default: derived from name).
 Use --start-suspended to add the rig in a suspended state (dormant-by-default).
 The rig's agents won't spawn until explicitly resumed with "gc rig resume".`,
 		Example: `  gc rig add /path/to/project
   gc rig add /path/to/project --name myrig
+  gc rig add /path/to/project --prefix r1
   gc rig add ./my-project --include packs/gastown
   gc rig add ./my-project --include packs/gastown --start-suspended`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(_ *cobra.Command, args []string) error {
-			if cmdRigAdd(args, include, nameFlag, startSuspended, stdout, stderr) != 0 {
+			if cmdRigAdd(args, include, nameFlag, prefixFlag, startSuspended, stdout, stderr) != 0 {
 				return errExit
 			}
 			return nil
@@ -80,6 +83,7 @@ The rig's agents won't spawn until explicitly resumed with "gc rig resume".`,
 	}
 	cmd.Flags().StringVar(&include, "include", "", "pack directory for rig agents")
 	cmd.Flags().StringVar(&nameFlag, "name", "", "rig name (default: directory basename)")
+	cmd.Flags().StringVar(&prefixFlag, "prefix", "", "bead ID prefix (default: derived from name)")
 	cmd.Flags().BoolVar(&startSuspended, "start-suspended", false, "add rig in suspended state (dormant-by-default)")
 	return cmd
 }
@@ -106,7 +110,7 @@ displays its bead ID prefix and whether its beads database is initialized.`,
 }
 
 // cmdRigAdd registers an external project directory as a rig in the city.
-func cmdRigAdd(args []string, include, nameOverride string, startSuspended bool, stdout, stderr io.Writer) int {
+func cmdRigAdd(args []string, include, nameOverride, prefixOverride string, startSuspended bool, stdout, stderr io.Writer) int {
 	if len(args) < 1 {
 		fmt.Fprintln(stderr, "gc rig add: missing path") //nolint:errcheck // best-effort stderr
 		return 1
@@ -123,14 +127,21 @@ func cmdRigAdd(args []string, include, nameOverride string, startSuspended bool,
 		fmt.Fprintf(stderr, "gc rig add: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
-	return doRigAdd(fsys.OSFS{}, cityPath, rigPath, include, nameOverride, startSuspended, stdout, stderr)
+	return doRigAdd(fsys.OSFS{}, cityPath, rigPath, include, nameOverride, prefixOverride, startSuspended, stdout, stderr)
 }
 
 // doRigAdd is the pure logic for "gc rig add". Operations are ordered so that
 // city.toml is written last — if any earlier step fails, config is unchanged.
 // This prevents partial-state bugs where city.toml lists a rig but the rig's
 // infrastructure (beads, routes) was never created.
-func doRigAdd(fs fsys.FS, cityPath, rigPath, include, nameOverride string, startSuspended bool, stdout, stderr io.Writer) int {
+func doRigAdd(fs fsys.FS, cityPath, rigPath, include, nameOverride, prefixOverride string, startSuspended bool, stdout, stderr io.Writer) int {
+	// Validate prefix format: hyphens break beadPrefix() which splits on
+	// the first '-' to extract the rig prefix from a bead ID.
+	if prefixOverride != "" && strings.Contains(prefixOverride, "-") {
+		fmt.Fprintf(stderr, "gc rig add: --prefix %q must not contain hyphens (conflicts with bead ID format)\n", prefixOverride) //nolint:errcheck // best-effort stderr
+		return 1
+	}
+
 	fi, err := fs.Stat(rigPath)
 	if err != nil {
 		// Directory doesn't exist — create it.
@@ -182,11 +193,35 @@ func doRigAdd(fs fsys.FS, cityPath, rigPath, include, nameOverride string, start
 
 	// Derive prefix. On re-add, use the existing rig's effective prefix
 	// to avoid splitting bead state when an explicit prefix is configured.
+	// An explicit --prefix flag takes precedence for new rigs.
+	// Canonicalize to lowercase: runtime lookup (findRigByPrefix) is
+	// case-insensitive, so validation must match.
 	var prefix string
-	if reAdd {
+	switch {
+	case reAdd:
 		prefix = existingRig.EffectivePrefix()
-	} else {
+	case prefixOverride != "":
+		prefix = strings.ToLower(prefixOverride)
+	default:
 		prefix = config.DeriveBeadsPrefix(name)
+	}
+
+	// Guard: if the rig already has a .beads/config.yaml with a different
+	// prefix, refuse to proceed. Silently overwriting would mix bead IDs
+	// when the same rig is registered in multiple cities.
+	if existingPrefix, ok := readBeadsPrefix(fs, rigPath); ok && existingPrefix != prefix {
+		if reAdd {
+			// On re-add, --prefix is ignored (we use the existing rig's
+			// configured prefix). Direct the user to edit city.toml.
+			fmt.Fprintf(stderr, "gc rig add: rig %q has bead prefix %q but city.toml has %q; "+ //nolint:errcheck // best-effort stderr
+				"edit city.toml to set prefix = %q, or remove %s/.beads to reinitialize\n",
+				name, existingPrefix, prefix, existingPrefix, rigPath)
+		} else {
+			fmt.Fprintf(stderr, "gc rig add: rig %q already has bead prefix %q (requested %q); "+ //nolint:errcheck // best-effort stderr
+				"use --prefix %s to match, or remove %s/.beads to reinitialize\n",
+				name, existingPrefix, prefix, existingPrefix, rigPath)
+		}
+		return 1
 	}
 
 	// --- Phase 1: Infrastructure (all fallible, before touching city.toml) ---
@@ -204,6 +239,10 @@ func doRigAdd(fs fsys.FS, cityPath, rigPath, include, nameOverride string, start
 		if include != "" && (len(existingRig.Includes) == 0 || existingRig.Includes[0] != include) {
 			fmt.Fprintf(stderr, "gc rig add: warning: --include=%s ignored (existing: %v); edit city.toml to change\n", //nolint:errcheck // best-effort stderr
 				include, existingRig.Includes)
+		}
+		if prefixOverride != "" && strings.ToLower(prefixOverride) != existingRig.EffectivePrefix() {
+			fmt.Fprintf(stderr, "gc rig add: warning: --prefix=%s ignored (existing: %s); edit city.toml to change\n", //nolint:errcheck // best-effort stderr
+				prefixOverride, existingRig.EffectivePrefix())
 		}
 	} else {
 		w(fmt.Sprintf("Adding rig '%s'...", name))
@@ -254,9 +293,18 @@ func doRigAdd(fs fsys.FS, cityPath, rigPath, include, nameOverride string, start
 
 	if !reAdd {
 		// Add rig to config and validate before writing.
+		// Store the canonicalized (lowercased) prefix, not the raw flag
+		// value. EffectivePrefix() returns the stored value as-is, and
+		// downstream consumers (findRigByPrefix, ValidateRigs) must agree
+		// on casing with .beads/config.yaml (always lowercase).
+		storedPrefix := ""
+		if prefixOverride != "" {
+			storedPrefix = strings.ToLower(prefixOverride)
+		}
 		rig := config.Rig{
 			Name:      name,
 			Path:      rigPath,
+			Prefix:    storedPrefix,
 			Suspended: startSuspended,
 		}
 		switch {
@@ -918,4 +966,28 @@ func writeBeadsEnvGTRoot(fs fsys.FS, rigPath, cityPath string) error {
 		return fmt.Errorf("creating .beads dir: %w", err)
 	}
 	return fs.WriteFile(envPath, []byte(content), 0o644)
+}
+
+// readBeadsPrefix reads the issue_prefix from an existing .beads/config.yaml
+// in the given rig directory. Returns the prefix and true if found, or empty
+// string and false if the file doesn't exist or has no prefix. Checks both
+// the underscore form (issue_prefix) and dash form (issue-prefix) since the
+// lifecycle code writes both.
+func readBeadsPrefix(fs fsys.FS, rigPath string) (string, bool) {
+	data, err := fs.ReadFile(filepath.Join(rigPath, ".beads", "config.yaml"))
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		for _, key := range []string{"issue_prefix:", "issue-prefix:"} {
+			if strings.HasPrefix(trimmed, key) {
+				val := strings.TrimSpace(strings.TrimPrefix(trimmed, key))
+				if val != "" {
+					return strings.ToLower(val), true
+				}
+			}
+		}
+	}
+	return "", false
 }

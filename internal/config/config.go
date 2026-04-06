@@ -1848,10 +1848,11 @@ func validateDependsOn(agents []Agent) error {
 // prefixes. The hqPrefix is the city's HQ prefix for collision checks.
 func ValidateRigs(rigs []Rig, hqPrefix string) error {
 	seenNames := make(map[string]bool, len(rigs))
-	seenPrefixes := make(map[string]string) // prefix → rig name (for error messages)
+	seenPrefixes := make(map[string]string) // lowercase prefix → rig name (for error messages)
 
 	// HQ prefix participates in collision detection.
-	seenPrefixes[hqPrefix] = "HQ"
+	// Lowercase to match runtime lookup (findRigByPrefix is case-insensitive).
+	seenPrefixes[strings.ToLower(hqPrefix)] = "HQ"
 
 	for i, r := range rigs {
 		if r.Name == "" {
@@ -1865,7 +1866,7 @@ func ValidateRigs(rigs []Rig, hqPrefix string) error {
 		}
 		seenNames[r.Name] = true
 
-		prefix := r.EffectivePrefix()
+		prefix := strings.ToLower(r.EffectivePrefix())
 		if other, ok := seenPrefixes[prefix]; ok {
 			return fmt.Errorf("rig %q: prefix %q collides with %s", r.Name, prefix, other)
 		}
