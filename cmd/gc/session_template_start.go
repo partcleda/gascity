@@ -51,6 +51,9 @@ func materializeSessionForTemplateWithOptions(
 	stderr io.Writer,
 	opts ensureSessionForTemplateOptions,
 ) (string, error) {
+	if stderr == nil {
+		stderr = io.Discard
+	}
 	templateName = normalizeNamedSessionTarget(templateName)
 	if templateName == "" {
 		return "", fmt.Errorf("%w: %q", errTemplateTargetNotFound, templateName)

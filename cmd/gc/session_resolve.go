@@ -93,7 +93,7 @@ func resolveConfiguredNamedSessionID(
 	if !opts.materialize {
 		return "", false, fmt.Errorf("%w: %q", session.ErrSessionNotFound, identifier)
 	}
-	id, err := ensureSessionIDForTemplate(cityPath, cfg, store, spec.Identity, nil)
+	id, err := ensureSessionIDForTemplate(cityPath, cfg, store, spec.Identity, io.Discard)
 	return id, true, err
 }
 
