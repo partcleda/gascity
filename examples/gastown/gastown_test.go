@@ -15,6 +15,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/gastownhall/gascity/internal/config"
+	"github.com/gastownhall/gascity/internal/formula"
 	"github.com/gastownhall/gascity/internal/fsys"
 )
 
@@ -115,7 +116,7 @@ func TestRefineryPromptSeedsTargetBranchVar(t *testing.T) {
 
 func TestRefineryFormulaSupportsMergeStrategies(t *testing.T) {
 	dir := exampleDir()
-	path := filepath.Join(dir, "packs", "gastown", "formulas", "mol-refinery-patrol.formula.toml")
+	path := filepath.Join(dir, "packs", "gastown", "formulas", "mol-refinery-patrol.toml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("reading refinery formula: %v", err)
@@ -502,7 +503,7 @@ func TestPromptGuidanceUsesConfiguredRigRootsAndNamespacedWorktrees(t *testing.T
 
 func TestIdeaToPlanFormulaUsesSupportedPrimitives(t *testing.T) {
 	dir := exampleDir()
-	path := filepath.Join(dir, "packs", "gastown", "formulas", "mol-idea-to-plan.formula.toml")
+	path := filepath.Join(dir, "packs", "gastown", "formulas", "mol-idea-to-plan.toml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("reading idea-to-plan formula: %v", err)
@@ -525,7 +526,7 @@ func TestIdeaToPlanFormulaUsesSupportedPrimitives(t *testing.T) {
 
 func TestReviewLegFormulaPersistsReportAndNotifiesCoordinator(t *testing.T) {
 	dir := exampleDir()
-	path := filepath.Join(dir, "packs", "gastown", "formulas", "mol-review-leg.formula.toml")
+	path := filepath.Join(dir, "packs", "gastown", "formulas", "mol-review-leg.toml")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("reading review-leg formula: %v", err)
@@ -555,7 +556,7 @@ func TestAllFormulasExist(t *testing.T) {
 
 	var count int
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".formula.toml") {
+		if e.IsDir() || !formula.IsTOMLFilename(e.Name()) {
 			continue
 		}
 		count++
@@ -917,7 +918,7 @@ func TestMaintenanceFormulasExist(t *testing.T) {
 
 	var count int
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".formula.toml") {
+		if e.IsDir() || !formula.IsTOMLFilename(e.Name()) {
 			continue
 		}
 		count++
@@ -940,7 +941,7 @@ func TestDoltHealthFormulasExist(t *testing.T) {
 
 	var count int
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".formula.toml") {
+		if e.IsDir() || !formula.IsTOMLFilename(e.Name()) {
 			continue
 		}
 		count++
