@@ -12,9 +12,9 @@ import (
 )
 
 // runStage1SkillMaterialization performs stage-1 skill materialization
-// for every eligible agent in cfg. Stage 1 materialises at each
+// for every eligible agent in cfg. Stage 1 materializes at each
 // agent's scope root (city or rig path). Session-worktree
-// materialisation (stage 2) is a separate PreStart-based path wired
+// materialization (stage 2) is a separate PreStart-based path wired
 // in by template_resolve.go via skill_integration.go.
 //
 // Stage-1 runs in the gc controller process on the host filesystem,
@@ -26,7 +26,7 @@ import (
 // per-session-routed; conservatively ineligible until v0.15.2.
 //
 // Catalog load happens once per call and feeds every agent's
-// materialisation in this tick. Per-agent errors (LoadAgentCatalog,
+// materialization in this tick. Per-agent errors (LoadAgentCatalog,
 // MaterializeAgent) are logged to stderr and do not abort the pass
 // — the supervisor should continue reconciling every other agent.
 // Catalog-level failures cause the whole pass to exit early with
@@ -71,7 +71,7 @@ func runStage1SkillMaterialization(cityPath string, cfg *config.City, stderr io.
 		}
 
 		// Resolve the agent's scope root to an absolute path. Use the
-		// un-canonicalised form here so the materializer writes into
+		// un-canonicalized form here so the materializer writes into
 		// the operator-intended location (e.g., /city/rigs/fe even
 		// when it's a symlink to /private/city/...). canonicalisation
 		// happens at comparison time inside MaterializeAgent via
@@ -87,7 +87,7 @@ func runStage1SkillMaterialization(cityPath string, cfg *config.City, stderr io.
 			owned = append(owned, agentCat.OwnedRoot)
 		}
 
-		res, merr := materialize.MaterializeAgent(materialize.MaterializeRequest{
+		res, merr := materialize.Run(materialize.Request{
 			SinkDir:     sinkDir,
 			Desired:     desired,
 			OwnedRoots:  owned,
@@ -111,7 +111,7 @@ func runStage1SkillMaterialization(cityPath string, cfg *config.City, stderr io.
 }
 
 // checkSkillCollisions runs the skill-collision validator before
-// materialisation. Two agents sharing the same (scope-root, vendor)
+// materialization. Two agents sharing the same (scope-root, vendor)
 // sink cannot both provide an agent-local skill under the same name
 // — one of them would overwrite the other's symlink with a different
 // target. Returns a formatted error suitable for direct display to
@@ -119,8 +119,8 @@ func runStage1SkillMaterialization(cityPath string, cfg *config.City, stderr io.
 //
 // `gc start` uses this as a hard gate (returning an error fails
 // start). The supervisor tick runs it on every reconcile and fails
-// the tick's materialise step on violation, leaving previously-
-// materialised skills in place.
+// the tick's materialize step on violation, leaving previously-
+// materialized skills in place.
 //
 // cityPath is used to rewrite the "<city>" sentinel in the formatted
 // error to the operator-visible city root.

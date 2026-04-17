@@ -269,7 +269,7 @@ func LoadWithIncludes(fs fsys.FS, path string, extraIncludes ...string) (*City, 
 		if collisions := collidesWithImplicitImports(root.Imports, bootstrapNames); len(collisions) > 0 {
 			names := strings.Join(collisions, ", ")
 			return nil, nil, fmt.Errorf(
-				"gc: city pack declares [imports.%s] which shadows the bootstrap implicit import(s) with the same name. Rename one side.",
+				"gc: city pack declares [imports.%s] which shadows the bootstrap implicit import(s) with the same name; rename one side",
 				names,
 			)
 		}

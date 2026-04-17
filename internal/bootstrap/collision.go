@@ -40,10 +40,10 @@ func CollidesWithBootstrapPack(userImports map[string]config.Import, bootstrapNa
 	return collisions
 }
 
-// BootstrapPackNames returns the current list of bootstrap pack names
+// PackNames returns the current list of bootstrap pack names
 // (from BootstrapPacks). Exposed for callers that need the bootstrap
 // name set for a collision check without depending on the Entry layout.
-func BootstrapPackNames() []string {
+func PackNames() []string {
 	names := make([]string, 0, len(BootstrapPacks))
 	for _, entry := range BootstrapPacks {
 		names = append(names, entry.Name)

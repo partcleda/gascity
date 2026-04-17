@@ -51,7 +51,7 @@ import (
 // agent's scope-root or session WorkDir where skills are materialized.
 //
 // Only the four providers with verified skill-reading behavior are
-// included. The other four providers recognised by hooks.go (copilot,
+// included. The other four providers recognized by hooks.go (copilot,
 // cursor, pi, omp) intentionally have no entry — VendorSink returns
 // ok=false so the caller can log a single skip line per session.
 var vendorSinks = map[string]string{
@@ -89,7 +89,7 @@ type SkillEntry struct {
 	// basename, e.g. "gc-work" or "plan".
 	Name string
 	// Source is the absolute filesystem path of the source directory.
-	// The materialised symlink targets this path.
+	// The materialized symlink targets this path.
 	Source string
 	// Origin is a diagnostic label describing which catalog this entry
 	// came from. One of: "city", "<bootstrap-pack-name>", "agent".
@@ -259,9 +259,9 @@ func EffectiveSet(city CityCatalog, agent AgentCatalog) []SkillEntry {
 	return out
 }
 
-// MaterializeRequest specifies one materialization pass into a single
+// Request specifies one materialization pass into a single
 // vendor sink.
-type MaterializeRequest struct {
+type Request struct {
 	// SinkDir is the absolute path of the sink directory, typically
 	// `<workdir>/<vendor-sink-relative>`. The materializer creates this
 	// directory if it does not exist.
@@ -292,9 +292,9 @@ type SkippedConflict struct {
 	Reason string
 }
 
-// MaterializeResult records the outcome of a single MaterializeAgent
+// Result records the outcome of a single MaterializeAgent
 // invocation. Lists are sorted for deterministic test/log output.
-type MaterializeResult struct {
+type Result struct {
 	// Materialized is the list of names whose symlinks now point at the
 	// desired source (created or already correct).
 	Materialized []string
@@ -311,7 +311,7 @@ type MaterializeResult struct {
 	Warnings []string
 }
 
-// MaterializeAgent runs one materialization pass for an agent's sink.
+// Run runs one materialization pass for an agent's sink.
 //
 // Pass order:
 //
@@ -329,17 +329,17 @@ type MaterializeResult struct {
 // MaterializeAgent is idempotent: a second invocation with the same
 // request observes a converged sink and creates nothing new. Errors
 // returned are sink-level fatal errors; per-entry errors are recorded
-// in MaterializeResult.Warnings and do not abort the pass.
-func MaterializeAgent(req MaterializeRequest) (MaterializeResult, error) {
+// in Result.Warnings and do not abort the pass.
+func Run(req Request) (Result, error) {
 	if req.SinkDir == "" {
-		return MaterializeResult{}, errors.New("materialize: SinkDir is required")
+		return Result{}, errors.New("materialize: SinkDir is required")
 	}
 	absSink, err := filepath.Abs(req.SinkDir)
 	if err != nil {
-		return MaterializeResult{}, fmt.Errorf("resolving sink dir %q: %w", req.SinkDir, err)
+		return Result{}, fmt.Errorf("resolving sink dir %q: %w", req.SinkDir, err)
 	}
 	if err := os.MkdirAll(absSink, 0o755); err != nil {
-		return MaterializeResult{}, fmt.Errorf("creating sink dir %q: %w", absSink, err)
+		return Result{}, fmt.Errorf("creating sink dir %q: %w", absSink, err)
 	}
 
 	desiredByName := make(map[string]SkillEntry, len(req.Desired))
@@ -347,7 +347,7 @@ func MaterializeAgent(req MaterializeRequest) (MaterializeResult, error) {
 		desiredByName[e.Name] = e
 	}
 
-	var result MaterializeResult
+	var result Result
 
 	owned := make([]string, 0, len(req.OwnedRoots))
 	for _, root := range req.OwnedRoots {
@@ -578,8 +578,8 @@ func bootstrapSkillDirs() ([]namedSkillsDir, error) {
 	if len(imports) == 0 {
 		return nil, nil
 	}
-	bootstrapNames := make(map[string]struct{}, len(bootstrap.BootstrapPackNames()))
-	for _, name := range bootstrap.BootstrapPackNames() {
+	bootstrapNames := make(map[string]struct{}, len(bootstrap.PackNames()))
+	for _, name := range bootstrap.PackNames() {
 		bootstrapNames[name] = struct{}{}
 	}
 	gcHome := config.ImplicitGCHome()
@@ -631,7 +631,7 @@ func targetUnderOwnedRoot(target string, ownedRoots []string) bool {
 // (via filepath.EvalSymlinks). When the path itself does not exist
 // (e.g., a dangling symlink target or a not-yet-created sink entry),
 // the function walks up to find the deepest ancestor that does exist,
-// canonicalises that, and re-appends the missing tail. This handles
+// canonicalizes that, and re-appends the missing tail. This handles
 // platforms where common roots are symlinks (macOS /tmp →
 // /private/tmp; certain Linux distros where /var symlinks elsewhere)
 // without breaking comparisons against materializer-written targets
@@ -655,7 +655,7 @@ func canonicalizePath(path string) (string, error) {
 	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
 		return resolved, nil
 	}
-	// Walk up until an ancestor exists; canonicalise it, then re-append
+	// Walk up until an ancestor exists; canonicalize it, then re-append
 	// the missing suffix. Falls back to the cleaned absolute path when
 	// nothing along the way exists (e.g., entirely-fictional path
 	// supplied by a test).

@@ -94,13 +94,13 @@ func EnsureBootstrapForCity(gcHome string, userImports map[string]config.Import)
 	// bootstrap implicit-import entries when the loading city already
 	// declares [imports.<name>] — silent shadowing would replace the
 	// user's pack content on upgrade.
-	if collisions := CollidesWithBootstrapPack(userImports, BootstrapPackNames()); len(collisions) > 0 {
+	if collisions := CollidesWithBootstrapPack(userImports, PackNames()); len(collisions) > 0 {
 		quoted := make([]string, len(collisions))
 		for i, name := range collisions {
 			quoted[i] = fmt.Sprintf("%q", name)
 		}
 		return fmt.Errorf(
-			"gc init: cannot add implicit import(s) %s — conflicts with city's [imports.<name>] of the same name. Rename one side.",
+			"gc init: cannot add implicit import(s) %s — conflicts with city's [imports.<name>] of the same name; rename one side",
 			strings.Join(quoted, ", "),
 		)
 	}

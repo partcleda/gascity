@@ -11,7 +11,7 @@ import (
 
 // writeSkillMD creates a skill directory at <skillsDir>/<name>/ with a
 // minimal SKILL.md file so validation.listAgentLocalSkills sees it.
-func writeSkillMD(t *testing.T, skillsDir, name string) {
+func writeSkillMD(t *testing.T, skillsDir, name string) { //nolint:unparam // name currently always "plan"; keep the flexible signature for future tests
 	t.Helper()
 	dir := filepath.Join(skillsDir, name)
 	if err := os.MkdirAll(dir, 0o755); err != nil {

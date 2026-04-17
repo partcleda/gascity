@@ -30,7 +30,7 @@ func newInternalCmd(stdout, stderr io.Writer) *cobra.Command {
 // WorkDir differs from the agent's scope root. See
 // engdocs/proposals/skill-materialization.md for the two-stage design.
 //
-// This is a thin wrapper over internal/materialize.MaterializeAgent:
+// This is a thin wrapper over internal/materialize.Run:
 // resolve city config → find named agent → look up its vendor sink →
 // build desired set → materialize. Never invoked by humans directly.
 func newInternalMaterializeSkillsCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -99,7 +99,7 @@ func newInternalMaterializeSkillsCmd(stdout, stderr io.Writer) *cobra.Command {
 				return errExit
 			}
 
-			res, err := materialize.MaterializeAgent(materialize.MaterializeRequest{
+			res, err := materialize.Run(materialize.Request{
 				SinkDir:     filepath.Join(absWorkdir, vendorSink),
 				Desired:     desired,
 				OwnedRoots:  owned,

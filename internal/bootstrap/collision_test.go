@@ -89,7 +89,7 @@ func TestCollidesWithBootstrapPack(t *testing.T) {
 }
 
 func TestBootstrapPackNamesMatchesEntries(t *testing.T) {
-	got := BootstrapPackNames()
+	got := PackNames()
 	if len(got) != len(BootstrapPacks) {
 		t.Fatalf("BootstrapPackNames len = %d, want %d", len(got), len(BootstrapPacks))
 	}
@@ -200,11 +200,11 @@ func TestEnsureBootstrapForCityNonCollidingImportsAllowWrite(t *testing.T) {
 // internal/config cannot import internal/bootstrap without a cycle;
 // this test catches drift if one list is updated without the other.
 func TestBootstrapManagedNames_MatchesBootstrapPacks(t *testing.T) {
-	bootstrap := BootstrapPackNames()
+	bootstrap := PackNames()
 	composer := config.BootstrapManagedImportNames()
 	sort.Strings(bootstrap)
 	sort.Strings(composer)
 	if !reflect.DeepEqual(bootstrap, composer) {
-		t.Fatalf("bootstrap pack name list drift:\n  BootstrapPackNames()            = %v\n  config.BootstrapManagedImportNames() = %v", bootstrap, composer)
+		t.Fatalf("bootstrap pack name list drift:\n  PackNames()            = %v\n  config.BootstrapManagedImportNames() = %v", bootstrap, composer)
 	}
 }

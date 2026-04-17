@@ -229,9 +229,9 @@ func writeCatalogFile(t *testing.T, dir, rel, content string) {
 // materializer's bootstrap-name filter.
 func bootstrapPackNameForTest(t *testing.T) string {
 	t.Helper()
-	names := bootstrap.BootstrapPackNames()
+	names := bootstrap.PackNames()
 	if len(names) == 0 {
-		t.Fatal("bootstrap.BootstrapPackNames() returned no names")
+		t.Fatal("bootstrap.PackNames() returned no names")
 	}
 	return names[0]
 }

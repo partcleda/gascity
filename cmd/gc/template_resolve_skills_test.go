@@ -78,17 +78,17 @@ func TestResolveTemplateSkillsIntegration(t *testing.T) {
 	}
 
 	cases := []struct {
-		name              string
-		sessionProvider   string
-		agent             *config.Agent
-		wantSkillsKey     bool // expect FPExtra["skills:plan"] populated
+		name               string
+		sessionProvider    string
+		agent              *config.Agent
+		wantSkillsKey      bool // expect FPExtra["skills:plan"] populated
 		wantMaterializeCmd bool // expect PreStart ends with materialize-skills invocation
 	}{
 		{
-			name:              "tmux + workdir == scope root",
-			sessionProvider:   "tmux",
-			agent:             &config.Agent{Name: "mayor", Scope: "city", Provider: "claude"},
-			wantSkillsKey:     true,
+			name:               "tmux + workdir == scope root",
+			sessionProvider:    "tmux",
+			agent:              &config.Agent{Name: "mayor", Scope: "city", Provider: "claude"},
+			wantSkillsKey:      true,
 			wantMaterializeCmd: false,
 		},
 		{
@@ -100,7 +100,7 @@ func TestResolveTemplateSkillsIntegration(t *testing.T) {
 				Provider: "claude",
 				WorkDir:  ".gc/worktrees/polecat-1",
 			},
-			wantSkillsKey:     true,
+			wantSkillsKey:      true,
 			wantMaterializeCmd: true,
 		},
 		{
@@ -112,14 +112,14 @@ func TestResolveTemplateSkillsIntegration(t *testing.T) {
 				Provider: "claude",
 				Session:  "acp",
 			},
-			wantSkillsKey:     false,
+			wantSkillsKey:      false,
 			wantMaterializeCmd: false,
 		},
 		{
-			name:              "k8s city session ineligible",
-			sessionProvider:   "k8s",
-			agent:             &config.Agent{Name: "pod-worker", Scope: "city", Provider: "claude"},
-			wantSkillsKey:     false,
+			name:               "k8s city session ineligible",
+			sessionProvider:    "k8s",
+			agent:              &config.Agent{Name: "pod-worker", Scope: "city", Provider: "claude"},
+			wantSkillsKey:      false,
 			wantMaterializeCmd: false,
 		},
 	}

@@ -152,7 +152,7 @@ func scanCityForDeprecatedAttachmentFields(cityPath string) ([]deprecatedAttachm
 // same multi-line array are not separately listed.
 //
 // Lines that fall inside a TOML multi-line string (`"""..."""` or
-// `'''...'''`) are opaque content and never match — this prevents
+// `”'...”'`) are opaque content and never match — this prevents
 // `gc doctor --fix` from corrupting a `description = """..."""`
 // field whose body happens to embed an illustrative `skills = [...]`
 // line.
@@ -189,7 +189,7 @@ func findDeprecatedAttachmentFieldLines(source string) []deprecatedAttachmentLin
 // is preserved when present.
 //
 // Mirrors findDeprecatedAttachmentFieldLines's multi-line string
-// state tracking: lines inside a `"""..."""` or `'''...'''` block
+// state tracking: lines inside a `"""..."""` or `”'...”'` block
 // are never stripped, even if their content syntactically resembles
 // a deprecated assignment.
 func rewriteWithoutDeprecatedAttachmentFields(path string) error {
@@ -246,12 +246,12 @@ func rewriteWithoutDeprecatedAttachmentFields(path string) error {
 }
 
 // tomlStringState tracks whether the scanner is currently inside an
-// open TOML multi-line string. Two flavours: basic (`"""..."""` —
-// escape sequences apply) and literal (`'''...'''` — raw content).
+// open TOML multi-line string. Two flavors: basic (`"""..."""` —
+// escape sequences apply) and literal (`”'...”'` — raw content).
 //
 // The scanner only needs to find the closing triple-quote token; it
 // does not need full TOML grammar fidelity. Per-line update is
-// recursive so a line that opens AND closes the same flavour
+// recursive so a line that opens AND closes the same flavor
 // (`description = """one-liner"""`) leaves the state unchanged.
 type tomlStringState struct {
 	inBasic   bool
@@ -266,9 +266,9 @@ func (s tomlStringState) inMultiline() bool {
 
 // update returns the new state after walking line, looking for the
 // triple-quote tokens that toggle multi-line state. Operates only on
-// the input flavour at most: when inside a basic string only `"""`
-// can close it; same for literal `'''`. When outside both, the first
-// triple-quote token (whichever flavour) opens its kind and the rest
+// the input flavor at most: when inside a basic string only `"""`
+// can close it; same for literal `”'`. When outside both, the first
+// triple-quote token (whichever flavor) opens its kind and the rest
 // of the line is rescanned from inside that state.
 func (s tomlStringState) update(line string) tomlStringState {
 	if s.inBasic {
@@ -326,11 +326,11 @@ func matchedDeprecatedKey(line string) (string, bool) {
 // assignment starting at lines[start]. Returns 1 for a single-line
 // value. Returns >1 when the value spans multiple lines via either a
 // bracketed array or a multi-line TOML string (`"""..."""` or
-// `'''..'''`); the span ends at the line where bracket depth returns
+// `”'..”'`); the span ends at the line where bracket depth returns
 // to 0 and no multi-line string is open.
 //
-// The scanner tracks all four TOML string flavours so values like
-// `skills = ['''contains ] bracket''']` are not prematurely closed
+// The scanner tracks all four TOML string flavors so values like
+// `skills = [”'contains ] bracket”']` are not prematurely closed
 // by a literal `]` inside a string body.
 func arrayLineSpan(lines []string, start int) int {
 	if start < 0 || start >= len(lines) {
@@ -378,8 +378,8 @@ func (s scanState) settled() bool {
 }
 
 // scanBrackets walks segment byte-by-byte, updating bracket depth and
-// TOML-string state. Triple-quote tokens (`"""`, `'''`) take precedence
-// over single-quote tokens — a literal `'''` opens a multi-line literal
+// TOML-string state. Triple-quote tokens (`"""`, `”'`) take precedence
+// over single-quote tokens — a literal `”'` opens a multi-line literal
 // string even though `'` would otherwise open a single-line literal
 // string. Comments (`#` outside any string) terminate the line scan
 // without altering depth or string state.

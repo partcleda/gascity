@@ -14,10 +14,10 @@ import (
 func TestIsStage2EligibleSession(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name           string
-		cityProvider   string
-		agentSession   string
-		wantEligible   bool
+		name         string
+		cityProvider string
+		agentSession string
+		wantEligible bool
 	}{
 		{"default empty → tmux (eligible)", "", "", true},
 		{"tmux eligible", "tmux", "", true},
@@ -52,9 +52,9 @@ func TestAgentScopeRoot(t *testing.T) {
 		{Name: "be", Path: "/rigs/be"},
 	}
 	cases := []struct {
-		name    string
-		agent   config.Agent
-		want    string
+		name  string
+		agent config.Agent
+		want  string
 	}{
 		{"city-scoped returns cityPath", config.Agent{Scope: "city"}, "/city"},
 		{"rig-scoped returns rig path", config.Agent{Scope: "rig", Dir: "fe"}, "/rigs/fe"},

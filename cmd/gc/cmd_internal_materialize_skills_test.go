@@ -46,7 +46,8 @@ template = "mayor"
 
 	workdir := t.TempDir()
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"internal", "materialize-skills",
+	code := run([]string{
+		"internal", "materialize-skills",
 		"--agent", "mayor",
 		"--workdir", workdir,
 	}, &stdout, &stderr)
@@ -114,7 +115,8 @@ template = "mayor"
 
 	workdir := t.TempDir()
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"internal", "materialize-skills",
+	code := run([]string{
+		"internal", "materialize-skills",
 		"--agent", "mayor",
 		"--workdir", workdir,
 	}, &stdout, &stderr)
@@ -164,7 +166,8 @@ template = "mayor"
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"internal", "materialize-skills",
+	code := run([]string{
+		"internal", "materialize-skills",
 		"--agent", "nonexistent",
 		"--workdir", t.TempDir(),
 	}, &stdout, &stderr)
@@ -243,7 +246,8 @@ template = "mayor"
 
 	// Pass 1.
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"internal", "materialize-skills",
+	code := run([]string{
+		"internal", "materialize-skills",
 		"--agent", "mayor",
 		"--workdir", workdir,
 	}, &stdout, &stderr)
@@ -254,7 +258,8 @@ template = "mayor"
 	// Pass 2 — observes converged state, creates nothing new.
 	stdout.Reset()
 	stderr.Reset()
-	code = run([]string{"internal", "materialize-skills",
+	code = run([]string{
+		"internal", "materialize-skills",
 		"--agent", "mayor",
 		"--workdir", workdir,
 	}, &stdout, &stderr)

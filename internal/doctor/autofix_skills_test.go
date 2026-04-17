@@ -312,7 +312,7 @@ func TestDeprecatedAttachmentFieldsCheckNoCityPath(t *testing.T) {
 // in a description or prompt field.
 // TestRewriteWithLiteralMultilineInArray is the regression for the
 // pass-2 Codex finding: a deprecated array can validly contain a
-// `'''..'''` body whose text includes `]`. Without literal-multiline
+// `”'..”'` body whose text includes `]`. Without literal-multiline
 // tracking the rewrite would close the array early, leave the
 // remaining body content as orphan lines, and corrupt the file.
 func TestRewriteWithLiteralMultilineInArray(t *testing.T) {

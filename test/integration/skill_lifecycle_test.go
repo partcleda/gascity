@@ -3,7 +3,7 @@
 // Skill materialization lifecycle integration tests (Phase 4B).
 //
 // These tests exercise the materializer at the api boundary the
-// supervisor tick uses — materialize.MaterializeAgent and the
+// supervisor tick uses — materialize.Run and the
 // end-to-end catalog discovery wiring — against a real filesystem.
 // Fast (no runtime.Provider spawned) but with real os.Symlink,
 // os.Readlink, and filepath.EvalSymlinks behaviour.
@@ -155,7 +155,7 @@ func materialiseAndAssertSkills(t *testing.T, cityPath, sinkDir string, wantName
 	desired := materialize.EffectiveSet(cat, materialize.AgentCatalog{})
 	owned := append([]string{}, cat.OwnedRoots...)
 
-	res, err := materialize.MaterializeAgent(materialize.MaterializeRequest{
+	res, err := materialize.Run(materialize.Request{
 		SinkDir:     sinkDir,
 		Desired:     desired,
 		OwnedRoots:  owned,

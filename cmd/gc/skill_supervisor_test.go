@@ -12,7 +12,7 @@ import (
 
 // TestRunStage1SkillMaterialization exercises the happy path of the
 // Phase 4A supervisor-tick helper: a tmux city with a claude-provider
-// city-scoped agent receives skills materialised at
+// city-scoped agent receives skills materialized at
 // <cityPath>/.claude/skills/<name> pointing at the city pack source.
 func TestRunStage1SkillMaterializationCityScoped(t *testing.T) {
 	clearGCEnv(t)
@@ -51,7 +51,7 @@ func TestRunStage1SkillMaterializationCityScoped(t *testing.T) {
 }
 
 // TestRunStage1MaterializesIntoRigScope confirms that a rig-scoped
-// agent materialises into the rig path, not the city path.
+// agent materializes into the rig path, not the city path.
 func TestRunStage1MaterializesIntoRigScope(t *testing.T) {
 	clearGCEnv(t)
 	cityPath := t.TempDir()
@@ -87,14 +87,14 @@ func TestRunStage1MaterializesIntoRigScope(t *testing.T) {
 }
 
 // TestRunStage1SkipsIneligibleRuntimes confirms k8s and acp
-// agents get no materialisation even if their provider has a vendor
+// agents get no materialization even if their provider has a vendor
 // sink — the spec forbids populating skills for agents whose
 // runtime cannot reach the scope root.
 func TestRunStage1SkipsIneligibleRuntimes(t *testing.T) {
 	cases := []struct {
-		name           string
-		citySession    string
-		agentSession   string
+		name         string
+		citySession  string
+		agentSession string
 	}{
 		{"k8s city session", "k8s", ""},
 		{"tmux city + acp agent", "tmux", "acp"},
@@ -125,7 +125,7 @@ func TestRunStage1SkipsIneligibleRuntimes(t *testing.T) {
 			}
 
 			if _, err := os.Lstat(filepath.Join(cityPath, ".claude", "skills", "plan")); err == nil {
-				t.Errorf("ineligible runtime materialised skill; sink exists at %q", filepath.Join(cityPath, ".claude", "skills", "plan"))
+				t.Errorf("ineligible runtime materialized skill; sink exists at %q", filepath.Join(cityPath, ".claude", "skills", "plan"))
 			}
 		})
 	}
@@ -368,7 +368,7 @@ func TestRunStage1SubprocessEligible(t *testing.T) {
 }
 
 // TestRunStage1AgentLocalOnlyInItsOwnSink confirms that an agent-local
-// skill materialises only into that agent's sink, not into other
+// skill materializes only into that agent's sink, not into other
 // agents' sinks at the same scope root.
 func TestRunStage1AgentLocalOnlyInItsOwnSink(t *testing.T) {
 	clearGCEnv(t)
@@ -466,7 +466,7 @@ func TestRunStage1CleansRemovedSkills(t *testing.T) {
 		},
 	}
 
-	// Pass 1 — both skills materialised.
+	// Pass 1 — both skills materialized.
 	var stderr bytes.Buffer
 	if err := runStage1SkillMaterialization(cityPath, cfg, &stderr); err != nil {
 		t.Fatal(err)

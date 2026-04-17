@@ -21,12 +21,12 @@ import (
 func requireBootstrapNames(t *testing.T, want ...string) {
 	t.Helper()
 	have := make(map[string]struct{})
-	for _, name := range bootstrap.BootstrapPackNames() {
+	for _, name := range bootstrap.PackNames() {
 		have[name] = struct{}{}
 	}
 	for _, name := range want {
 		if _, ok := have[name]; !ok {
-			t.Fatalf("test fixture references bootstrap pack %q which is no longer in bootstrap.BootstrapPackNames() = %v", name, bootstrap.BootstrapPackNames())
+			t.Fatalf("test fixture references bootstrap pack %q which is no longer in bootstrap.PackNames() = %v", name, bootstrap.PackNames())
 		}
 	}
 }
@@ -278,9 +278,9 @@ func TestMaterializeAgentCreatesSink(t *testing.T) {
 	mkSkill(t, src, "alpha")
 	sink := filepath.Join(t.TempDir(), "deeply", "nested", "skills")
 
-	res, err := MaterializeAgent(MaterializeRequest{
-		SinkDir: sink,
-		Desired: []SkillEntry{{Name: "alpha", Source: filepath.Join(src, "alpha"), Origin: "city"}},
+	res, err := Run(Request{
+		SinkDir:    sink,
+		Desired:    []SkillEntry{{Name: "alpha", Source: filepath.Join(src, "alpha"), Origin: "city"}},
 		OwnedRoots: []string{src},
 	})
 	if err != nil {
@@ -306,7 +306,7 @@ func TestMaterializeAgentIdempotent(t *testing.T) {
 	desired := []SkillEntry{{Name: "alpha", Source: filepath.Join(src, "alpha"), Origin: "city"}}
 
 	for i := 0; i < 3; i++ {
-		res, err := MaterializeAgent(MaterializeRequest{
+		res, err := Run(Request{
 			SinkDir:    sink,
 			Desired:    desired,
 			OwnedRoots: []string{src},
@@ -383,7 +383,7 @@ func TestMaterializeAgentDecisionMatrix(t *testing.T) {
 		// Note: 'orphan' and 'dangling' are intentionally NOT desired.
 	}
 
-	res, err := MaterializeAgent(MaterializeRequest{
+	res, err := Run(Request{
 		SinkDir:    sink,
 		Desired:    desired,
 		OwnedRoots: []string{src},
@@ -457,7 +457,7 @@ func TestMaterializeAgentLegacyStubMigratedThenSymlinked(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := MaterializeAgent(MaterializeRequest{
+	res, err := Run(Request{
 		SinkDir:     sink,
 		Desired:     []SkillEntry{{Name: "gc-work", Source: filepath.Join(src, "gc-work"), Origin: "core"}},
 		OwnedRoots:  []string{src},
@@ -490,7 +490,7 @@ func TestMaterializeAgentLegacyStubPreservesUserContent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := MaterializeAgent(MaterializeRequest{
+	res, err := Run(Request{
 		SinkDir:     sink,
 		Desired:     []SkillEntry{{Name: "gc-work", Source: filepath.Join(src, "gc-work"), Origin: "core"}},
 		OwnedRoots:  []string{src},
@@ -531,7 +531,7 @@ func TestMaterializeAgentLegacyStubExtraFilesPreserved(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := MaterializeAgent(MaterializeRequest{
+	res, err := Run(Request{
 		SinkDir:     sink,
 		Desired:     []SkillEntry{{Name: "gc-work", Source: filepath.Join(src, "gc-work"), Origin: "core"}},
 		OwnedRoots:  []string{src},
@@ -550,7 +550,7 @@ func TestMaterializeAgentLegacyStubExtraFilesPreserved(t *testing.T) {
 
 func TestMaterializeAgentSinkDirRequired(t *testing.T) {
 	t.Parallel()
-	if _, err := MaterializeAgent(MaterializeRequest{}); err == nil {
+	if _, err := Run(Request{}); err == nil {
 		t.Fatal("expected error for empty SinkDir")
 	}
 }
@@ -571,7 +571,7 @@ func TestMaterializeAgentRemovesAllOwnedWhenDesiredEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := MaterializeAgent(MaterializeRequest{
+	res, err := Run(Request{
 		SinkDir:    sink,
 		OwnedRoots: []string{src},
 	})
@@ -595,27 +595,27 @@ func TestMaterializeAgentRemovesAllOwnedWhenDesiredEmpty(t *testing.T) {
 // TestMaterializeAgentAliasedOwnedRoot exercises the path-alias case
 // from the Phase 2 review: when the owned root is supplied as a path
 // that traverses a symlink (e.g., /tmp/proj/skills where /tmp →
-// /private/tmp on macOS), the materializer must still recognise
+// /private/tmp on macOS), the materializer must still recognize
 // previously-written symlinks pointing at the resolved form as its
 // own. Without canonicalisation the symlink would be reclassified as
 // external and never updated.
 func TestMaterializeAgentAliasedOwnedRoot(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	// Real source dir: <root>/real/skills
-	realSkills := filepath.Join(root, "real", "skills")
+	// Real source dir: <root>/realDir/skills
+	realSkills := filepath.Join(root, "realDir", "skills")
 	mkSkill(t, realSkills, "alpha")
-	// Symlinked alias: <root>/alias -> <root>/real
-	if err := os.Symlink(filepath.Join(root, "real"), filepath.Join(root, "alias")); err != nil {
+	// Symlinked alias: <root>/alias -> <root>/realDir
+	if err := os.Symlink(filepath.Join(root, "realDir"), filepath.Join(root, "alias")); err != nil {
 		t.Skipf("symlink unsupported: %v", err)
 	}
 	aliasedRoot := filepath.Join(root, "alias", "skills")
 
 	sink := filepath.Join(t.TempDir(), "skills")
 
-	// First pass: materialise via the aliased owned-root path. The link
+	// First pass: materialize via the aliased owned-root path. The link
 	// target is also written using the aliased path.
-	res, err := MaterializeAgent(MaterializeRequest{
+	res, err := Run(Request{
 		SinkDir:    sink,
 		Desired:    []SkillEntry{{Name: "alpha", Source: filepath.Join(aliasedRoot, "alpha"), Origin: "city"}},
 		OwnedRoots: []string{aliasedRoot},
@@ -632,7 +632,7 @@ func TestMaterializeAgentAliasedOwnedRoot(t *testing.T) {
 	// written above would be classified as external; cleanup would skip
 	// it and the create loop would Skip the desired entry as a
 	// "user-owned symlink at sink path" — not what we want.
-	res2, err := MaterializeAgent(MaterializeRequest{
+	res2, err := Run(Request{
 		SinkDir:    sink,
 		Desired:    []SkillEntry{{Name: "alpha", Source: filepath.Join(realSkills, "alpha"), Origin: "city"}},
 		OwnedRoots: []string{realSkills},
@@ -670,7 +670,7 @@ func TestMaterializeAgentRelativeSymlinkLeftAlone(t *testing.T) {
 		t.Skipf("symlink unsupported: %v", err)
 	}
 
-	res, err := MaterializeAgent(MaterializeRequest{
+	res, err := Run(Request{
 		SinkDir:    sink,
 		Desired:    []SkillEntry{{Name: "alpha", Source: filepath.Join(src, "alpha"), Origin: "city"}},
 		OwnedRoots: []string{src},
@@ -687,7 +687,7 @@ func TestMaterializeAgentRelativeSymlinkLeftAlone(t *testing.T) {
 		t.Errorf("user-rel target rewritten: %q", tgt)
 	}
 	if !reflect.DeepEqual(res.Materialized, []string{"alpha"}) {
-		t.Errorf("alpha not materialised alongside user-rel: %v", res.Materialized)
+		t.Errorf("alpha not materialized alongside user-rel: %v", res.Materialized)
 	}
 	for _, w := range res.Warnings {
 		if strings.Contains(w, "user-rel") || strings.Contains(w, "elsewhere") {
@@ -699,16 +699,16 @@ func TestMaterializeAgentRelativeSymlinkLeftAlone(t *testing.T) {
 func TestCanonicalizePath(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	real := filepath.Join(root, "real")
-	if err := os.MkdirAll(real, 0o755); err != nil {
+	realDir := filepath.Join(root, "realDir")
+	if err := os.MkdirAll(realDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	alias := filepath.Join(root, "alias")
-	if err := os.Symlink(real, alias); err != nil {
+	if err := os.Symlink(realDir, alias); err != nil {
 		t.Skipf("symlink unsupported: %v", err)
 	}
 
-	// Existing directory: alias resolves to real.
+	// Existing directory: alias resolves to realDir.
 	got, err := canonicalizePath(alias)
 	if err != nil {
 		t.Fatal(err)
@@ -905,7 +905,7 @@ func setupBootstrapHome(t *testing.T, packs map[string][]string) string {
 	return gcHome
 }
 
-// globalRepoCachePathHelper centralises the import of config.GlobalRepoCachePath
+// globalRepoCachePathHelper centralizes the import of config.GlobalRepoCachePath
 // so the rest of the helpers don't need to know about that surface.
 func globalRepoCachePathHelper(gcHome, source, commit string) string {
 	return config.GlobalRepoCachePath(gcHome, source, commit)

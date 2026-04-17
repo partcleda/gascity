@@ -1884,7 +1884,7 @@ func WarnDeprecatedAttachmentFields(cfg *City) {
 	if !hasDeprecatedAttachmentFields(cfg) {
 		return
 	}
-	fmt.Fprintln(deprecationWarningSink, deprecatedAttachmentWarning)
+	fmt.Fprintln(deprecationWarningSink, deprecatedAttachmentWarning) //nolint:errcheck // best-effort warning sink
 }
 
 func hasDeprecatedAttachmentFields(cfg *City) bool {
