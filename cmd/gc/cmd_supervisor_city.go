@@ -32,7 +32,7 @@ var (
 
 func supervisorCityStartTimeout(cityPath string) time.Duration {
 	timeout := supervisorCityReadyTimeout
-	cfg, err := loadCityConfig(cityPath)
+	cfg, err := loadCityConfig(cityPath, io.Discard)
 	if err != nil {
 		return timeout
 	}
@@ -44,7 +44,7 @@ func supervisorCityStartTimeout(cityPath string) time.Duration {
 
 func supervisorCityStopTimeout(cityPath string) time.Duration {
 	timeout := supervisorCityReadyTimeout
-	cfg, err := loadCityConfig(cityPath)
+	cfg, err := loadCityConfig(cityPath, io.Discard)
 	if err != nil {
 		return timeout
 	}

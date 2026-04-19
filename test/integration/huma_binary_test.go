@@ -39,15 +39,13 @@ func TestHumaBinary_SupervisorBootsAndServesSpec(t *testing.T) {
 	runtimeDir := shortTempDir(t)
 	port := reserveFreePort(t)
 	writeSupervisorConfig(t, gcHome, port)
+	if err := seedDoltIdentityForRoot(gcHome); err != nil {
+		t.Fatalf("seed dolt identity: %v", err)
+	}
 
 	baseURL := "http://127.0.0.1:" + strconv.Itoa(port)
 	cityRoot := filepath.Join(gcHome, "city")
-	env := append(os.Environ(),
-		"GC_HOME="+gcHome,
-		"XDG_RUNTIME_DIR="+runtimeDir,
-		"GC_BEADS=file",
-		"GC_DOLT=skip",
-	)
+	env := integrationEnvFor(gcHome, runtimeDir, true)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -124,8 +122,8 @@ func TestHumaBinary_SupervisorBootsAndServesSpec(t *testing.T) {
 	cityListURL := baseURL + "/v0/cities"
 	waitForCityRegistered(t, cityListURL, "humatest", 5*time.Second)
 
-	// 3) `gc city status` — resolves the city path, then calls per-city status.
-	runCLI(t, bin, env, "gc city status", "--city", cityRoot, "status")
+	// 3) `gc status` — per-city status against the supervisor-managed city path.
+	runCLI(t, bin, env, "gc status", "--city", cityRoot, "status")
 
 	// 4) `gc session list` — per-city, exercises a different domain handler.
 	runCLI(t, bin, env, "gc session list", "--city", cityRoot, "session", "list")
