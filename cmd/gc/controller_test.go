@@ -209,7 +209,7 @@ func TestControllerSocketFallbackUsesShortPathForLongCityPath(t *testing.T) {
 	pokeCh := make(chan struct{}, 1)
 	controlDispatcherCh := make(chan struct{}, 1)
 	configDirty := &atomic.Bool{}
-	lis, err := startControllerSocket(cityPath, cancel, configDirty, convergenceReqCh, pokeCh, controlDispatcherCh)
+	lis, err := startControllerSocket(cityPath, cancel, configDirty, nil, convergenceReqCh, pokeCh, controlDispatcherCh)
 	if err != nil {
 		t.Fatalf("startControllerSocket: %v", err)
 	}
@@ -509,10 +509,9 @@ func TestControllerReloadsConventionDiscoveredAgentOnWatchEvent(t *testing.T) {
 		t.Fatalf("WriteFile(prompt.template.md): %v", err)
 	}
 
-	var stderr bytes.Buffer
-	result, err := tryReloadConfig(tomlPath, "test", dir, &stderr)
+	result, err := tryReloadConfig(tomlPath, "test", dir)
 	if err != nil {
-		t.Fatalf("tryReloadConfig() error = %v, stderr = %s", err, stderr.String())
+		t.Fatalf("tryReloadConfig() error = %v", err)
 	}
 	if result.Revision == initialRev {
 		t.Fatalf("revision did not change after convention-discovered agent was added: %s", result.Revision)
@@ -819,7 +818,7 @@ func TestHandleControllerConnControlDispatcher(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		handleControllerConn(server, cityPath, func() {}, nil, convergenceReqCh, pokeCh, controlDispatcherCh)
+		handleControllerConn(server, cityPath, func() {}, nil, nil, convergenceReqCh, pokeCh, controlDispatcherCh)
 		close(done)
 	}()
 
