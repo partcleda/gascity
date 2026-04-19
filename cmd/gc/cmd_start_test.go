@@ -10,6 +10,8 @@ import (
 
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
+	"github.com/gastownhall/gascity/internal/fsys"
+	"github.com/gastownhall/gascity/internal/materialize"
 	"github.com/gastownhall/gascity/internal/runtime"
 )
 
@@ -456,5 +458,360 @@ func TestBuildFingerprintExtra_StableAcrossBaseAndInstance(t *testing.T) {
 	// between base and instance agents and is the drift source.
 	if _, has := baseExtra["pool.check"]; has {
 		t.Fatalf("buildFingerprintExtra must not include pool.check (it bakes QualifiedName and differs across base/instance forms): %v", baseExtra)
+	}
+}
+
+// TestResolveTemplateFPExtra_StableAcrossBaseAndInstance asserts the FULL
+// FPExtra (including skill entries merged inside resolveTemplate) matches
+// byte-for-byte between the base agent and its deepCopied instance. This
+// covers the drift pattern where two buildDesiredState code paths produce
+// different tp.FPExtra for the same logical session bead, causing the
+// reconciler's CoreFingerprint to oscillate and drain live sessions. The
+// plain buildFingerprintExtra test above catches the pool/wake_mode half;
+// this one catches the skills-merge half.
+func TestResolveTemplateFPExtra_StableAcrossBaseAndInstance(t *testing.T) {
+	cityPath := t.TempDir()
+	writeTemplateResolveCityConfig(t, cityPath, "file")
+	if err := os.WriteFile(filepath.Join(cityPath, "pack.toml"),
+		[]byte("[pack]\nname = \"fp-test\"\nversion = \"0.1.0\"\nschema = 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skillDir := filepath.Join(cityPath, "skills", "plan")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"),
+		[]byte("---\nname: plan\ndescription: test\n---\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sharedCat, err := materialize.LoadCityCatalog(filepath.Join(cityPath, "skills"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	makeParams := func() *agentBuildParams {
+		return &agentBuildParams{
+			cityName:  "city",
+			cityPath:  cityPath,
+			workspace: &config.Workspace{Provider: "claude"},
+			providers: map[string]config.ProviderSpec{
+				"claude": {Command: "echo", PromptMode: "none", SupportsACP: true},
+			},
+			lookPath:        func(string) (string, error) { return "/bin/echo", nil },
+			fs:              fsys.OSFS{},
+			rigs:            []config.Rig{},
+			beaconTime:      time.Unix(0, 0),
+			beadNames:       make(map[string]string),
+			stderr:          io.Discard,
+			skillCatalog:    &sharedCat,
+			sessionProvider: "tmux",
+		}
+	}
+
+	baseAgent := &config.Agent{
+		Name:              "claude",
+		Scope:             "city",
+		Provider:          "claude",
+		MaxActiveSessions: intPtr(1),
+		WakeMode:          "fresh",
+	}
+	instanceAgent := deepCopyAgent(baseAgent, "claude-1", baseAgent.Dir)
+
+	tpBase, err := resolveTemplate(makeParams(), baseAgent, baseAgent.QualifiedName(), buildFingerprintExtra(baseAgent))
+	if err != nil {
+		t.Fatalf("resolveTemplate(base): %v", err)
+	}
+	tpInst, err := resolveTemplate(makeParams(), &instanceAgent, instanceAgent.QualifiedName(), buildFingerprintExtra(&instanceAgent))
+	if err != nil {
+		t.Fatalf("resolveTemplate(instance): %v", err)
+	}
+
+	if len(tpBase.FPExtra) != len(tpInst.FPExtra) {
+		t.Fatalf("FPExtra size differs base=%d instance=%d (base=%v instance=%v)",
+			len(tpBase.FPExtra), len(tpInst.FPExtra), tpBase.FPExtra, tpInst.FPExtra)
+	}
+	for k, bv := range tpBase.FPExtra {
+		iv, ok := tpInst.FPExtra[k]
+		if !ok {
+			t.Fatalf("instance FPExtra missing key %q (base=%q)", k, bv)
+		}
+		if bv != iv {
+			t.Fatalf("FPExtra[%q] differs: base=%q instance=%q — reconciler CoreFingerprint will oscillate and drain live sessions", k, bv, iv)
+		}
+	}
+}
+
+// TestAgentBuildParams_FPExtraStableAcrossCatalogTransients is an
+// integration test that reproduces the observed "FPExtra: map[] (len=0)"
+// drift end-to-end: tick N loads the skill catalog successfully → a
+// session is started with `skills:*` entries in FPExtra → tick N+1's
+// catalog discovery produces an empty result (from cfg.PackSkills being
+// transiently absent during a config-reload window, or from a
+// filesystem flap) → without the cache, FPExtra drops skills and the
+// CoreFingerprint flips. Asserts that newAgentBuildParams' last-good
+// cache keeps params.skillCatalog populated so resolveTemplate produces
+// a byte-identical FPExtra on both ticks.
+func TestAgentBuildParams_FPExtraStableAcrossCatalogTransients(t *testing.T) {
+	cityPath := t.TempDir()
+	writeTemplateResolveCityConfig(t, cityPath, "file")
+	if err := os.WriteFile(filepath.Join(cityPath, "pack.toml"),
+		[]byte("[pack]\nname = \"fp-test\"\nversion = \"0.1.0\"\nschema = 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skillDir := filepath.Join(cityPath, "skills", "plan")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"),
+		[]byte("---\nname: plan\ndescription: test\n---\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgGood := &config.City{
+		Workspace:     config.Workspace{Provider: "claude"},
+		PackSkillsDir: filepath.Join(cityPath, "skills"),
+		Providers: map[string]config.ProviderSpec{
+			"claude": {Command: "echo", PromptMode: "none", SupportsACP: true},
+		},
+		Session: config.SessionConfig{Provider: "tmux"},
+	}
+	cfgBroken := &config.City{
+		Workspace:     config.Workspace{Provider: "claude"},
+		PackSkillsDir: filepath.Join(cityPath, "nonexistent-skills"),
+		Providers: map[string]config.ProviderSpec{
+			"claude": {Command: "echo", PromptMode: "none", SupportsACP: true},
+		},
+		Session: config.SessionConfig{Provider: "tmux"},
+	}
+
+	agent := &config.Agent{
+		Name:              "claude",
+		Dir:               "gascity",
+		Scope:             "rig",
+		Provider:          "claude",
+		MaxActiveSessions: intPtr(6),
+	}
+
+	// Tick N: catalog loads fully.
+	bpGood := newAgentBuildParams("city", cityPath, cfgGood, nil, time.Unix(0, 0), nil, io.Discard)
+	bpGood.lookPath = func(string) (string, error) { return "/bin/echo", nil }
+	tpN, err := resolveTemplate(bpGood, agent, agent.QualifiedName(), buildFingerprintExtra(agent))
+	if err != nil {
+		t.Fatalf("tickN resolveTemplate: %v", err)
+	}
+	if _, has := tpN.FPExtra["skills:plan"]; !has {
+		t.Fatalf("tickN FPExtra missing skills:plan (%+v)", tpN.FPExtra)
+	}
+
+	// Tick N+1: catalog discovery produces empty (simulates cfg mutation
+	// during a config reload window). The cache must kick in.
+	bpDegraded := newAgentBuildParams("city", cityPath, cfgBroken, nil, time.Unix(0, 0), nil, io.Discard)
+	bpDegraded.lookPath = func(string) (string, error) { return "/bin/echo", nil }
+	tpN1, err := resolveTemplate(bpDegraded, agent, agent.QualifiedName(), buildFingerprintExtra(agent))
+	if err != nil {
+		t.Fatalf("tickN+1 resolveTemplate: %v", err)
+	}
+	if len(tpN.FPExtra) != len(tpN1.FPExtra) {
+		t.Fatalf("FPExtra size differs across catalog-transient ticks: tickN=%d tickN+1=%d (tickN=%v tickN+1=%v) — config-drift drain-storm reproducer",
+			len(tpN.FPExtra), len(tpN1.FPExtra), tpN.FPExtra, tpN1.FPExtra)
+	}
+	for k, bv := range tpN.FPExtra {
+		iv, ok := tpN1.FPExtra[k]
+		if !ok {
+			t.Errorf("FPExtra key %q present on tickN but dropped on tickN+1 (base=%q)", k, bv)
+			continue
+		}
+		if bv != iv {
+			t.Errorf("FPExtra[%q] differs across ticks: tickN=%q tickN+1=%q", k, bv, iv)
+		}
+	}
+}
+
+// TestNewAgentBuildParams_CachesLastGoodCatalog verifies that a
+// transient LoadCityCatalog failure reuses the most recently cached
+// catalog so FingerprintExtra stays stable. The production drift was
+// reproduced as: tick N loads catalog successfully → session starts
+// with skills:* entries → tick N+1 load fails → skillCatalog=nil →
+// FPExtra drops skills → CoreFingerprint flips → every live session
+// drains in config-drift. The fix is a process-level last-good cache.
+func TestNewAgentBuildParams_CachesLastGoodCatalog(t *testing.T) {
+	cityPath := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cityPath, "pack.toml"),
+		[]byte("[pack]\nname = \"fp-test\"\nversion = \"0.1.0\"\nschema = 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skillDir := filepath.Join(cityPath, "skills", "plan")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"),
+		[]byte("---\nname: plan\ndescription: test\n---\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgGood := &config.City{
+		PackSkillsDir: filepath.Join(cityPath, "skills"),
+	}
+	// First call: real load succeeds and caches the catalog.
+	bpGood := newAgentBuildParams("city", cityPath, cfgGood, nil, time.Unix(0, 0), nil, io.Discard)
+	if bpGood.skillCatalog == nil {
+		t.Fatalf("baseline: skillCatalog is nil despite successful load")
+	}
+	baselineEntries := len(bpGood.skillCatalog.Entries)
+	if baselineEntries == 0 {
+		t.Fatalf("baseline: expected >=1 skill entry, got 0 (catalog=%+v)", bpGood.skillCatalog)
+	}
+
+	// Second call: point PackSkillsDir at a directory that doesn't exist,
+	// simulating a transient failure (filesystem race during dolt sync,
+	// permissions flap, etc.). The cache must kick in and restore the
+	// catalog so FingerprintExtra stays byte-identical across ticks.
+	cfgBroken := &config.City{
+		PackSkillsDir: filepath.Join(cityPath, "nonexistent-skills"),
+	}
+	bpDegraded := newAgentBuildParams("city", cityPath, cfgBroken, nil, time.Unix(0, 0), nil, io.Discard)
+	if bpDegraded.skillCatalog == nil {
+		t.Fatalf("cache miss: skillCatalog is nil after LoadCityCatalog failure — the last-good catalog cache is not kicking in; this is the config-drift drain-storm reproducer")
+	}
+	if got := len(bpDegraded.skillCatalog.Entries); got != baselineEntries {
+		t.Errorf("cache mismatch: degraded-tick catalog has %d entries, want %d (baseline)", got, baselineEntries)
+	}
+}
+
+// TestResolveTemplateFPExtra_NotEmptyForPoolAgent pins the observed
+// "FPExtra: map[] (len=0)" drift: a mayor-like or pool-like agent with
+// MaxActiveSessions set and WakeMode != "" must never produce an empty
+// FingerprintExtra, regardless of sessionProvider, catalog state, or
+// agent struct shape. If a code path ever constructs tp with empty FPExtra
+// for such an agent, the reconciler's stored fingerprint (built at session
+// start with full FPExtra) will never match the reconcile-time computation
+// and every tick drains the session.
+//
+// Matrix covers the inputs the reconcile-side build_params sees:
+//   - sessionProvider: "tmux" (stage-2 eligible) vs "" (isStage2 returns
+//     true for empty too) vs "subprocess" (ineligible, skills don't merge
+//     but pool/wake must still populate FPExtra)
+//   - skill catalog: loaded vs nil (simulates LoadCityCatalog failure)
+//   - WakeMode: "fresh" vs "" vs "resume" (resume is intentionally
+//     excluded from FPExtra; assert that only wake_mode drops, not pool.*)
+func TestResolveTemplateFPExtra_NotEmptyForPoolAgent(t *testing.T) {
+	cityPath := t.TempDir()
+	writeTemplateResolveCityConfig(t, cityPath, "file")
+	if err := os.WriteFile(filepath.Join(cityPath, "pack.toml"),
+		[]byte("[pack]\nname = \"fp-test\"\nversion = \"0.1.0\"\nschema = 2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skillDir := filepath.Join(cityPath, "skills", "plan")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"),
+		[]byte("---\nname: plan\ndescription: test\n---\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sharedCat, err := materialize.LoadCityCatalog(filepath.Join(cityPath, "skills"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	makeParams := func(sessionProvider string, skills *materialize.CityCatalog) *agentBuildParams {
+		return &agentBuildParams{
+			cityName:  "city",
+			cityPath:  cityPath,
+			workspace: &config.Workspace{Provider: "claude"},
+			providers: map[string]config.ProviderSpec{
+				"claude": {Command: "echo", PromptMode: "none", SupportsACP: true},
+			},
+			lookPath:        func(string) (string, error) { return "/bin/echo", nil },
+			fs:              fsys.OSFS{},
+			rigs:            []config.Rig{},
+			beaconTime:      time.Unix(0, 0),
+			beadNames:       make(map[string]string),
+			stderr:          io.Discard,
+			skillCatalog:    skills,
+			sessionProvider: sessionProvider,
+		}
+	}
+
+	cases := []struct {
+		name            string
+		sessionProvider string
+		skills          *materialize.CityCatalog
+		agent           *config.Agent
+	}{
+		{
+			name:            "tmux+skills",
+			sessionProvider: "tmux",
+			skills:          &sharedCat,
+			agent: &config.Agent{
+				Name: "mayor", Scope: "city", Provider: "claude",
+				MaxActiveSessions: intPtr(1), WakeMode: "fresh",
+			},
+		},
+		{
+			name:            "tmux+nil-catalog",
+			sessionProvider: "tmux",
+			skills:          nil,
+			agent: &config.Agent{
+				Name: "mayor", Scope: "city", Provider: "claude",
+				MaxActiveSessions: intPtr(1), WakeMode: "fresh",
+			},
+		},
+		{
+			name:            "subprocess+nil-catalog",
+			sessionProvider: "subprocess",
+			skills:          nil,
+			agent: &config.Agent{
+				Name: "mayor", Scope: "city", Provider: "claude",
+				MaxActiveSessions: intPtr(1), WakeMode: "fresh",
+			},
+		},
+		{
+			name:            "subprocess+resume-wake",
+			sessionProvider: "subprocess",
+			skills:          nil,
+			agent: &config.Agent{
+				Name: "claude", Dir: "gascity", Scope: "rig", Provider: "claude",
+				MaxActiveSessions: intPtr(6), WakeMode: "resume",
+			},
+		},
+		{
+			name:            "tmux+pool+empty-wake",
+			sessionProvider: "tmux",
+			skills:          &sharedCat,
+			agent: &config.Agent{
+				Name: "claude", Dir: "gascity", Scope: "rig", Provider: "claude",
+				MaxActiveSessions: intPtr(6),
+			},
+		},
+	}
+
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			fpExtra := buildFingerprintExtra(c.agent)
+			tp, err := resolveTemplate(makeParams(c.sessionProvider, c.skills), c.agent, c.agent.QualifiedName(), fpExtra)
+			if err != nil {
+				t.Fatalf("resolveTemplate: %v", err)
+			}
+			if len(tp.FPExtra) == 0 {
+				t.Fatalf("tp.FPExtra must not be empty for pool agent %q (MaxActiveSessions=%d wake_mode=%q provider=%q) — empty FPExtra is the observed drift signature in production (stored=7687ba... current=e3b0c44... = empty hash)",
+					c.agent.QualifiedName(), func() int {
+						if c.agent.MaxActiveSessions != nil {
+							return *c.agent.MaxActiveSessions
+						}
+						return 0
+					}(), c.agent.WakeMode, c.sessionProvider)
+			}
+			// At minimum, pool.min and pool.max must be present for any agent
+			// with MaxActiveSessions set — those are pure identity and never
+			// depend on catalog state or session provider.
+			if _, has := tp.FPExtra["pool.max"]; !has {
+				t.Errorf("tp.FPExtra missing pool.max for pool agent (FPExtra=%v)", tp.FPExtra)
+			}
+			if _, has := tp.FPExtra["pool.min"]; !has {
+				t.Errorf("tp.FPExtra missing pool.min for pool agent (FPExtra=%v)", tp.FPExtra)
+			}
+		})
 	}
 }

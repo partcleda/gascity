@@ -97,24 +97,65 @@ func newAgentBuildParams(cityName, cityPath string, cfg *config.City, sp runtime
 		stderr:          stderr,
 		sessionProvider: cfg.Session.Provider,
 	}
-	// Load the shared skill catalog once per build cycle. Errors are
-	// non-fatal — the build continues without skills participating in
-	// fingerprints or PreStart, which matches the spec's "no spurious
-	// drain-restart cycles on remote-runtime agents" principle when
-	// discovery breaks transiently.
+	// Load the shared skill catalog once per build cycle. A transient load
+	// failure (filesystem race during dolt sync / heavy I/O) used to
+	// silently set skillCatalog = nil for that tick, which dropped every
+	// `skills:*` entry from FingerprintExtra and flipped CoreFingerprint
+	// for every live session → config-drift drain storm. Fall back to the
+	// last successfully cached catalog so the fingerprint stays stable
+	// across transient failures. A real catalog edit still propagates: the
+	// next successful load overwrites the cache.
 	cat, err := loadSharedSkillCatalog(cfg, "")
 	if err != nil {
-		if stderr != nil {
-			fmt.Fprintf(stderr, "buildDesiredState: LoadCityCatalog %v (skills will not contribute to fingerprints this tick)\n", err) //nolint:errcheck // best-effort stderr
+		if cached, ok := cachedCityCatalog(cityPath); ok {
+			catCopy := cached
+			params.skillCatalog = &catCopy
+			if stderr != nil {
+				fmt.Fprintf(stderr, "buildDesiredState: LoadCityCatalog %v (using cached catalog to avoid drift)\n", err) //nolint:errcheck // best-effort stderr
+			}
+		} else if stderr != nil {
+			fmt.Fprintf(stderr, "buildDesiredState: LoadCityCatalog %v (no cached catalog; skills will not contribute to fingerprints this tick)\n", err) //nolint:errcheck // best-effort stderr
+		}
+	} else if len(cat.Entries) == 0 {
+		// No error but empty catalog: if we've previously seen a non-empty
+		// catalog for this city, treat the empty result as a transient
+		// input-state glitch (e.g., cfg.PackSkills temporarily empty
+		// during a config reload window) and reuse the cached one.
+		// Otherwise an empty→non-empty→empty sequence drops `skills:*`
+		// entries from FingerprintExtra and triggers the drift drain.
+		// Real removal of all skills will only happen via an explicit
+		// config change; that path should go through config-reload
+		// invalidation rather than this silent shape-flip.
+		if cached, ok := cachedCityCatalog(cityPath); ok && len(cached.Entries) > 0 {
+			catCopy := cached
+			params.skillCatalog = &catCopy
+			if stderr != nil {
+				fmt.Fprintf(stderr, "buildDesiredState: LoadCityCatalog returned empty (cached had %d entries; reusing cache to avoid drift)\n", len(cached.Entries)) //nolint:errcheck // best-effort stderr
+			}
+		} else {
+			params.skillCatalog = &cat
+			setCachedCityCatalog(cityPath, cat)
 		}
 	} else {
 		params.skillCatalog = &cat
+		setCachedCityCatalog(cityPath, cat)
 	}
 	for rigName := range cfg.RigPackSkills {
 		cat, err := loadSharedSkillCatalog(cfg, rigName)
 		if err != nil {
+			if cached, ok := cachedRigCatalog(cityPath, rigName); ok {
+				if params.rigSkillCatalogs == nil {
+					params.rigSkillCatalogs = make(map[string]*materialize.CityCatalog)
+				}
+				catCopy := cached
+				params.rigSkillCatalogs[rigName] = &catCopy
+				if stderr != nil {
+					fmt.Fprintf(stderr, "buildDesiredState: LoadCityCatalog rig %q %v (using cached catalog to avoid drift)\n", rigName, err) //nolint:errcheck // best-effort stderr
+				}
+				continue
+			}
 			if stderr != nil {
-				fmt.Fprintf(stderr, "buildDesiredState: LoadCityCatalog rig %q %v (skills will not contribute to fingerprints this tick)\n", rigName, err) //nolint:errcheck // best-effort stderr
+				fmt.Fprintf(stderr, "buildDesiredState: LoadCityCatalog rig %q %v (no cached catalog; skills will not contribute to fingerprints this tick)\n", rigName, err) //nolint:errcheck // best-effort stderr
 			}
 			if params.failedRigSkillCatalogs == nil {
 				params.failedRigSkillCatalogs = make(map[string]bool)
@@ -122,11 +163,25 @@ func newAgentBuildParams(cityName, cityPath string, cfg *config.City, sp runtime
 			params.failedRigSkillCatalogs[rigName] = true
 			continue
 		}
+		if len(cat.Entries) == 0 {
+			if cached, ok := cachedRigCatalog(cityPath, rigName); ok && len(cached.Entries) > 0 {
+				if params.rigSkillCatalogs == nil {
+					params.rigSkillCatalogs = make(map[string]*materialize.CityCatalog)
+				}
+				catCopy := cached
+				params.rigSkillCatalogs[rigName] = &catCopy
+				if stderr != nil {
+					fmt.Fprintf(stderr, "buildDesiredState: LoadCityCatalog rig %q returned empty (cached had %d entries; reusing cache to avoid drift)\n", rigName, len(cached.Entries)) //nolint:errcheck // best-effort stderr
+				}
+				continue
+			}
+		}
 		if params.rigSkillCatalogs == nil {
 			params.rigSkillCatalogs = make(map[string]*materialize.CityCatalog)
 		}
 		catCopy := cat
 		params.rigSkillCatalogs[rigName] = &catCopy
+		setCachedRigCatalog(cityPath, rigName, cat)
 	}
 	return params
 }
