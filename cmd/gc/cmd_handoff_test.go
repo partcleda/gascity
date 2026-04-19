@@ -70,6 +70,76 @@ func TestHandoffSuccess(t *testing.T) {
 	}
 }
 
+// Regression for gastownhall/gascity#744:
+// gc handoff on a named (human-attended) session used to call
+// setRestartRequested unconditionally. The controller cannot respawn a
+// user-started session, so the PreCompact hook crashed the mayor to the
+// user's shell on every context compaction. doHandoff must recognise the
+// named-session case, still send the handoff mail, and skip both the
+// tmux and bead restart flags.
+func TestDoHandoff_Regression744_NamedSessionSkipsRestart(t *testing.T) {
+	store := beads.NewMemStore()
+	rec := events.NewFake()
+	dops := newFakeDrainOps()
+	var stdout, stderr bytes.Buffer
+
+	// Seed a session bead marked as a configured named session (i.e. the
+	// mayor). IsNamedSessionBead returns true for beads whose metadata
+	// contains configured_named_session="true".
+	b, err := store.Create(beads.Bead{
+		Type:   "agent_session",
+		Labels: []string{"gc:session"},
+	})
+	if err != nil {
+		t.Fatalf("seeding session bead: %v", err)
+	}
+	if err := store.SetMetadata(b.ID, "session_name", "mayor"); err != nil {
+		t.Fatalf("set session_name: %v", err)
+	}
+	if err := store.SetMetadata(b.ID, "configured_named_session", "true"); err != nil {
+		t.Fatalf("set configured_named_session: %v", err)
+	}
+
+	code := doHandoff(store, rec, dops, "mayor", "mayor",
+		[]string{"HANDOFF: context full"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d, want 0; stderr: %s", code, stderr.String())
+	}
+
+	// Mail must still be sent — context preservation is the whole point.
+	mailFound := false
+	all, _ := store.ListOpen()
+	for _, got := range all {
+		if got.Title == "HANDOFF: context full" && got.Type == "message" {
+			mailFound = true
+			break
+		}
+	}
+	if !mailFound {
+		t.Fatalf("handoff mail not created; beads=%v", all)
+	}
+
+	// Restart must NOT be requested — the controller can't respawn a
+	// user-started named session.
+	if dops.restartRequested["mayor"] {
+		t.Errorf("setRestartRequested(mayor) was called — named sessions must skip restart (gascity#744)")
+	}
+
+	// Bead-level restart flag must also be absent.
+	refreshed, err := store.Get(b.ID)
+	if err != nil {
+		t.Fatalf("fetching seeded bead: %v", err)
+	}
+	if refreshed.Metadata["restart_requested"] == "true" {
+		t.Errorf("bead restart_requested set for named session — should be skipped (gascity#744)")
+	}
+
+	// Stdout should not promise a restart the controller can't deliver.
+	if strings.Contains(stdout.String(), "requesting restart") {
+		t.Errorf("stdout = %q, must not promise a restart for named sessions", stdout.String())
+	}
+}
+
 func TestHandoffWithMessage(t *testing.T) {
 	store := beads.NewMemStore()
 	rec := events.NewFake()

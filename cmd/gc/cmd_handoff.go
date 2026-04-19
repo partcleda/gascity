@@ -142,6 +142,22 @@ func doHandoff(store beads.Store, rec events.Recorder, dops drainOps, persistRes
 		Payload: mailEventPayload(nil),
 	})
 
+	// Named (human-attended) sessions are started by the user — the
+	// controller cannot respawn them after a restart request, so sending
+	// setRestartRequested would kill the session to a dead shell on every
+	// PreCompact tick. Preserve the handoff mail so context survives, but
+	// skip both restart flags. Regression guard: gastownhall/gascity#744.
+	if sessionIsNamed(store, sessionName) {
+		rec.Record(events.Event{
+			Type:    events.SessionDraining,
+			Actor:   sessionAddress,
+			Subject: sessionAddress,
+			Message: "handoff",
+		})
+		fmt.Fprintf(stdout, "Handoff: sent mail %s (named session — restart skipped).\n", b.ID) //nolint:errcheck // best-effort stdout
+		return 0
+	}
+
 	if err := dops.setRestartRequested(sessionName); err != nil {
 		fmt.Fprintf(stderr, "gc handoff: setting restart flag: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
@@ -162,6 +178,30 @@ func doHandoff(store beads.Store, rec events.Recorder, dops drainOps, persistRes
 
 	fmt.Fprintf(stdout, "Handoff: sent mail %s, requesting restart...\n", b.ID) //nolint:errcheck // best-effort stdout
 	return 0
+}
+
+// sessionIsNamed reports whether the open session bead for sessionName is
+// a configured named session (human-attended). Returns false if the store
+// is nil, the lookup errors, or no open bead matches — the caller falls
+// through to the default restart path, preserving legacy behavior.
+func sessionIsNamed(store beads.Store, sessionName string) bool {
+	if store == nil || sessionName == "" {
+		return false
+	}
+	all, err := store.List(beads.ListQuery{Label: sessionBeadLabel})
+	if err != nil {
+		return false
+	}
+	for _, b := range all {
+		if b.Status == "closed" {
+			continue
+		}
+		if b.Metadata["session_name"] != sessionName {
+			continue
+		}
+		return isNamedSessionBead(b)
+	}
+	return false
 }
 
 // doHandoffRemote sends handoff mail to a remote session and kills its runtime.
