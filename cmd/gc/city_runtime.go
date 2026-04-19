@@ -277,24 +277,68 @@ func (cr *CityRuntime) run(ctx context.Context) {
 		return
 	}
 
+	retryDelay := cr.cfg.Daemon.PatrolIntervalDuration()
+	startupRetryLimit := cr.cfg.Daemon.MaxRestartsOrDefault()
+	waitForRetry := func() bool {
+		timer := time.NewTimer(retryDelay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+	retryStartupStep := func(trigger string, complete func() bool, run func()) bool {
+		for attempt := 1; !complete(); attempt++ {
+			panicked := cr.safeTick(run, trigger)
+			if ctx.Err() != nil {
+				return false
+			}
+			if complete() {
+				return true
+			}
+			if !panicked {
+				fmt.Fprintf(cr.stderr, "%s: %s did not complete without panic; stopping city runtime\n", //nolint:errcheck
+					cr.logPrefix, trigger)
+				return false
+			}
+			if startupRetryLimit > 0 && attempt >= startupRetryLimit {
+				fmt.Fprintf(cr.stderr, "%s: %s did not complete after %d attempt(s); stopping city runtime\n", //nolint:errcheck
+					cr.logPrefix, trigger, attempt)
+				return false
+			}
+			if !waitForRetry() {
+				return false
+			}
+		}
+		return true
+	}
+
 	// Adoption barrier: ensure every running session has a bead.
 	// Runs on every startup (rerunnable, crash-safe).
-	if cr.onStatus != nil {
-		cr.onStatus("adopting_sessions")
-	}
-	if cr.cityBeadStore() != nil {
-		result, passed := runAdoptionBarrier(cr.cityBeadStore(), cr.sp, cr.cfg, cr.cityName, clock.Real{}, cr.stderr, false)
-		if result.Adopted > 0 {
-			fmt.Fprintf(cr.stdout, "Adopted %d running session(s) into bead store.\n", result.Adopted) //nolint:errcheck
+	adoptionComplete := false
+	if !retryStartupStep("adoption-barrier", func() bool { return adoptionComplete }, func() {
+		if cr.onStatus != nil {
+			cr.onStatus("adopting_sessions")
 		}
-		if !passed {
-			// Sessions that fail adoption AND have no matching agent are
-			// invisible to the bead reconciler (which only processes beaded
-			// sessions). They will be cleaned up when they naturally exit.
-			// Sessions with matching agents get beads via syncSessionBeads
-			// on the next tick.
-			fmt.Fprintf(cr.stderr, "%s: adoption barrier: %d session(s) failed bead creation\n", cr.logPrefix, result.Skipped) //nolint:errcheck
+		if cr.cityBeadStore() != nil {
+			result, passed := runAdoptionBarrier(cr.cityBeadStore(), cr.sp, cr.cfg, cr.cityName, clock.Real{}, cr.stderr, false)
+			if result.Adopted > 0 {
+				fmt.Fprintf(cr.stdout, "Adopted %d running session(s) into bead store.\n", result.Adopted) //nolint:errcheck
+			}
+			if !passed {
+				// Sessions that fail adoption AND have no matching agent are
+				// invisible to the bead reconciler (which only processes beaded
+				// sessions). They will be cleaned up when they naturally exit.
+				// Sessions with matching agents get beads via syncSessionBeads
+				// on the next tick.
+				fmt.Fprintf(cr.stderr, "%s: adoption barrier: %d session(s) failed bead creation\n", cr.logPrefix, result.Skipped) //nolint:errcheck
+			}
 		}
+		adoptionComplete = true
+	}) {
+		return
 	}
 	if ctx.Err() != nil {
 		return
@@ -316,7 +360,8 @@ func (cr *CityRuntime) run(ctx context.Context) {
 	// into cityRuntime.shutdown(). See issue #663. The trace cycle is
 	// ended inside the closure via defer so it's closed out on panic,
 	// ctx cancellation, or normal completion alike.
-	cr.safeTick(func() {
+	startupComplete := false
+	if !retryStartupStep("startup", func() bool { return startupComplete }, func() {
 		sessionBeads := cr.loadSessionBeadSnapshot()
 		startupTrace := cr.beginTraceCycle("startup", "initial_reconcile", sessionBeads)
 		completion := TraceCompletionAborted
@@ -353,21 +398,14 @@ func (cr *CityRuntime) run(ctx context.Context) {
 			return
 		}
 
-		// Mark city as started. Convergence startup reconciliation runs on
-		// the first tick (it calls List() which waits for the full async prime).
-		if cr.onStatus != nil {
-			cr.onStatus("starting_agents")
-		}
-		if cr.onStarted != nil {
-			cr.onStarted()
-		}
-		fmt.Fprintln(cr.stdout, "City started.") //nolint:errcheck // best-effort stdout
-
 		if cr.sessionDrains != nil {
 			cr.beadReconcileTick(ctx, result, sessionBeads, startupTrace)
 		}
 		completion = TraceCompletionCompleted
-	}, "startup")
+		startupComplete = true
+	}) {
+		return
+	}
 	if ctx.Err() != nil {
 		return
 	}
@@ -379,11 +417,31 @@ func (cr *CityRuntime) run(ctx context.Context) {
 	//
 	// Wrapped in safeTick so a panic during convergence recovery (same
 	// class of transient store failure as #663) doesn't cascade to
-	// cityRuntime.shutdown(). The next patrol tick will re-drain any
-	// still-pending convergence beads.
-	cr.safeTick(func() {
+	// cityRuntime.shutdown(). Startup does not advance until the active
+	// convergence index is populated, so later patrols can drain pending
+	// convergence beads.
+	convergenceStartupDone := convergenceStartupComplete(cr)
+	if !retryStartupStep("convergence-startup", func() bool { return convergenceStartupDone }, func() {
 		cr.convergenceStartupReconcile(ctx)
-	}, "convergence-startup")
+		convergenceStartupDone = true
+	}) {
+		return
+	}
+	if ctx.Err() != nil {
+		return
+	}
+
+	// Mark city as started only after all retry-critical startup work has
+	// completed. Publishing readiness before bead reconciliation or
+	// convergence index population would let API callers observe a started
+	// city whose one-shot startup state is still incomplete.
+	if cr.onStatus != nil {
+		cr.onStatus("starting_agents")
+	}
+	if cr.onStarted != nil {
+		cr.onStarted()
+	}
+	fmt.Fprintln(cr.stdout, "City started.") //nolint:errcheck // best-effort stdout
 	if ctx.Err() != nil {
 		return
 	}
@@ -419,7 +477,9 @@ func (cr *CityRuntime) run(ctx context.Context) {
 				cr.controlDispatcherTick(ctx)
 			}, "control-dispatcher")
 		case req := <-cr.reloadReqCh:
-			cr.handleReloadRequest(&req)
+			cr.safeTick(func() {
+				cr.handleReloadRequest(&req)
+			}, "reload-request")
 		case req := <-cr.convergenceReqCh:
 			// Low-latency path: process convergence commands between ticks.
 			// processConvergenceRequests() in tick() drains any that arrived
@@ -427,8 +487,10 @@ func (cr *CityRuntime) run(ctx context.Context) {
 			// are atomic, so each request is processed exactly once.
 			// Note: ordering relative to convergenceTick is non-deterministic
 			// via this path, but handlers are idempotent so interleaving is safe.
-			reply := cr.safeHandleConvergenceRequest(ctx, req)
-			req.replyCh <- reply
+			cr.safeTick(func() {
+				reply := cr.safeHandleConvergenceRequest(ctx, req)
+				req.replyCh <- reply
+			}, "convergence-request")
 		case <-ctx.Done():
 			cr.failActiveReload("Reload canceled because the controller is shutting down.")
 			return
@@ -452,13 +514,16 @@ func (cr *CityRuntime) run(ctx context.Context) {
 // strictly better than the prior behavior of one panic killing every
 // session in the city with no log of what triggered it. Operators
 // should treat repeated "reconciler tick panicked" lines as a bug
-// report, not a steady-state condition.
+// report, not a steady-state condition. The panic signal is intentionally
+// stderr-only because recovery must not depend on event-bus availability
+// during store or controller failures.
 //
 // Trigger identifies which tick site fired so operators can correlate
 // the log with the cause.
-func (cr *CityRuntime) safeTick(fn func(), trigger string) {
+func (cr *CityRuntime) safeTick(fn func(), trigger string) (panicked bool) {
 	defer func() {
 		if r := recover(); r != nil {
+			panicked = true
 			// Include the recovered type and a stack trace so a latent
 			// invariant bug (e.g. nil deref) is diagnosable from the log
 			// alone — crucial because safeTick intentionally swallows
@@ -468,6 +533,14 @@ func (cr *CityRuntime) safeTick(fn func(), trigger string) {
 		}
 	}()
 	fn()
+	return false
+}
+
+func convergenceStartupComplete(cr *CityRuntime) bool {
+	return cr.convHandler == nil ||
+		cr.convergenceReqCh == nil ||
+		cr.convStoreAdapter == nil ||
+		cr.convStoreAdapter.activeIndex != nil
 }
 
 // tick performs one reconciliation tick: pool death detection, config
@@ -523,13 +596,38 @@ func (cr *CityRuntime) tick(
 
 	var manualReload *reloadRequest
 	var manualReply reloadControlReply
+	manualReloadCompleted := false
+	manualReloadReplied := false
+	dirtyCleared := false
+	tickCompleted := false
+	defer func() {
+		if dirtyCleared && !tickCompleted && manualReload == nil {
+			dirty.Store(true)
+		}
+		if manualReload == nil || manualReloadReplied {
+			return
+		}
+		reply := reloadControlReply{
+			Outcome: reloadOutcomeFailed,
+			Error:   fmt.Sprintf("Reload failed because reconciliation tick %q panicked before completion.", trigger),
+		}
+		if manualReloadCompleted {
+			reply = manualReply
+		}
+		cr.sendReloadReply(manualReload.doneCh, reply)
+		cr.activeReload = nil
+	}()
 	if dirty.Swap(false) {
+		dirtyCleared = true
 		source := reloadSourceWatch
 		if cr.activeReload != nil {
 			source = reloadSourceManual
 			manualReload = cr.activeReload
 		}
 		manualReply = cr.reloadConfigTraced(ctx, lastProviderName, cityRoot, trace, source)
+		if manualReload != nil {
+			manualReloadCompleted = true
+		}
 	}
 
 	// Session bead sync BEFORE reconciliation (one-tick state lag; see run()).
@@ -601,13 +699,12 @@ func (cr *CityRuntime) tick(
 	// Convergence tick: process active convergence loops.
 	cr.convergenceTick(ctx)
 	if manualReload != nil {
-		select {
-		case manualReload.doneCh <- manualReply:
-		default:
-		}
+		cr.sendReloadReply(manualReload.doneCh, manualReply)
+		manualReloadReplied = true
 		cr.activeReload = nil
 	}
 	completion = TraceCompletionCompleted
+	tickCompleted = true
 }
 
 func (cr *CityRuntime) handleReloadRequest(req *reloadRequest) {
@@ -640,14 +737,24 @@ func (cr *CityRuntime) failActiveReload(message string) {
 	if cr.activeReload == nil {
 		return
 	}
-	select {
-	case cr.activeReload.doneCh <- reloadControlReply{
+	cr.sendReloadReply(cr.activeReload.doneCh, reloadControlReply{
 		Outcome: reloadOutcomeFailed,
 		Error:   message,
-	}:
+	})
+	cr.activeReload = nil
+}
+
+func (cr *CityRuntime) sendReloadReply(ch chan<- reloadControlReply, reply reloadControlReply) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(cr.stderr, "%s: reload reply panicked: %v (type=%T)\n%s\n", //nolint:errcheck // best-effort stderr
+				cr.logPrefix, r, r, debug.Stack())
+		}
+	}()
+	select {
+	case ch <- reply:
 	default:
 	}
-	cr.activeReload = nil
 }
 
 // reloadConfig attempts to reload city.toml and update all internal
