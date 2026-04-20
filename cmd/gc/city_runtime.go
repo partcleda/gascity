@@ -699,8 +699,14 @@ func (cr *CityRuntime) tick(
 	if store := cr.cityBeadStore(); cr.wg != nil && store != nil && cr.wg.shouldRun(time.Now()) {
 		purged, gcErr := cr.wg.runGC(store, time.Now())
 		if gcErr != nil {
-			fmt.Fprintf(cr.stderr, "%s: wisp gc: %v\n", cr.logPrefix, gcErr) //nolint:errcheck // best-effort stderr
-		} else if purged > 0 {
+			for _, line := range strings.Split(gcErr.Error(), "\n") {
+				if line == "" {
+					continue
+				}
+				fmt.Fprintf(cr.stderr, "%s: wisp gc: %s\n", cr.logPrefix, line) //nolint:errcheck // best-effort stderr
+			}
+		}
+		if purged > 0 {
 			fmt.Fprintf(cr.stdout, "Bead GC: purged %d expired bead(s)\n", purged) //nolint:errcheck // best-effort stdout
 		}
 	}
