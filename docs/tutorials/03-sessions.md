@@ -253,9 +253,13 @@ mc-wisp-8t8 is a review request for the auth module. I've routed it to
 my-project/reviewer.
 ```
 
-`--tail N` prints the last N log entries (same convention as `tail -n`), so
-`--tail 2` above shows the most recent user prompt and the mayor's reply.
-Use `--tail 0` to print the whole conversation. Follow live output with `-f`:
+`--tail N` prints the last N transcript entries (same convention as `tail -n`),
+so `--tail 2` above shows the most recent user prompt and the mayor's reply.
+Compact-boundary dividers count as entries if one lands inside that final
+window. Use `--tail 0` to print the whole conversation. Compatibility note:
+before 1.0, `--tail` counted compaction segments; as of 1.0 it counts
+displayed transcript entries instead. The HTTP API's `tail` query parameter
+still counts compaction segments. Follow live output with `-f`:
 
 ```shell
 ~/my-city

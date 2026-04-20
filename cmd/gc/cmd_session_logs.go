@@ -28,10 +28,19 @@ Reads the session log, resolves the conversation DAG, and prints
 messages in chronological order. Searches default paths (~/.claude/projects/)
 and any extra paths from [daemon] observe_paths in city.toml.
 
-Use --tail to print only the last N log entries (0 = all). Semantics match
-Unix 'tail -n': '--tail 5' prints the final 5 entries, not the first 5.
+Use --tail to print only the last N transcript entries (0 = all).
+Semantics match Unix 'tail -n': '--tail 5' prints the final 5 entries,
+not the first 5. A single assistant turn with multiple tool-use blocks
+still counts as one entry. Compact-boundary dividers count as entries
+when they fall inside the final window.
+
+Compatibility note: before 1.0, --tail mapped to compaction segments.
+As of 1.0, --tail trims the displayed transcript entry window instead.
+The HTTP API's tail query parameter still uses compaction-segment
+semantics.
 Use -f to follow new messages as they arrive.`,
 		Example: `  gc session logs mayor
+  gc session logs mayor --tail 2
   gc session logs gc-123 --tail 20
   gc session logs gc-123 --tail 0
   gc session logs s-gc-123 -f`,
@@ -44,7 +53,7 @@ Use -f to follow new messages as they arrive.`,
 		},
 	}
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Follow new messages as they arrive")
-	cmd.Flags().IntVar(&tail, "tail", 10, "Number of most recent log entries to show (0 = all)")
+	cmd.Flags().IntVar(&tail, "tail", 10, "Number of most recent transcript entries to show (0 = all; compact dividers count as entries)")
 	return cmd
 }
 
@@ -232,9 +241,15 @@ func doSessionLogs(path, provider string, follow bool, tail int, stdout, stderr 
 		return 1
 	}
 
+	return runSessionLogs(factory, provider, path, follow, tail, stdout, stderr, time.Sleep, readSessionFile)
+}
+
+type sessionLogsReader func(factory *worker.Factory, provider, path string) (*worker.TranscriptSession, error)
+
+func runSessionLogs(factory *worker.Factory, provider, path string, follow bool, tail int, stdout, stderr io.Writer, sleep func(time.Duration), read sessionLogsReader) int {
 	// Always read the full session; apply tail trimming locally so semantics
 	// are a true "last N entries" window regardless of compaction boundaries.
-	sess, readErr := readSessionFile(factory, provider, path, 0)
+	sess, readErr := read(factory, provider, path)
 	if readErr != nil {
 		fmt.Fprintf(stderr, "gc session logs: %v\n", readErr) //nolint:errcheck // best-effort stderr
 		return 1
@@ -262,9 +277,9 @@ func doSessionLogs(path, provider string, follow bool, tail int, stdout, stderr 
 	const maxConsecErrors = 5
 	consecErrors := 0
 	for {
-		time.Sleep(2 * time.Second)
+		sleep(2 * time.Second)
 
-		sess, readErr = readSessionFile(factory, provider, path, 0)
+		sess, readErr = read(factory, provider, path)
 		if readErr != nil {
 			consecErrors++
 			if consecErrors >= maxConsecErrors {
@@ -285,11 +300,11 @@ func doSessionLogs(path, provider string, follow bool, tail int, stdout, stderr 
 	}
 }
 
-func readSessionFile(factory *worker.Factory, provider, path string, tail int) (*worker.TranscriptSession, error) {
+func readSessionFile(factory *worker.Factory, provider, path string) (*worker.TranscriptSession, error) {
 	result, err := factory.ReadTranscript(worker.TranscriptRequest{
 		Provider:        provider,
 		TranscriptPath:  path,
-		TailCompactions: tail,
+		TailCompactions: 0,
 	})
 	if err != nil {
 		return nil, err

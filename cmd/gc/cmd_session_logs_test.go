@@ -2,15 +2,18 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gastownhall/gascity/internal/beads"
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/session"
 	"github.com/gastownhall/gascity/internal/sessionlog"
+	"github.com/gastownhall/gascity/internal/worker"
 )
 
 func writeTestSession(t *testing.T, searchBase, workDir string, lines ...string) {
@@ -390,75 +393,104 @@ func TestDoSessionLogsNegativeTail(t *testing.T) {
 	}
 }
 
-// TestDoSessionLogsFollowSeeding verifies that follow mode seeds the 'seen' map
-// with ALL existing messages (not just the tail window) before entering the
-// poll loop. Without this, switching from tail=N to tail=0 re-reads would
-// replay messages from before the compaction boundary.
-func TestDoSessionLogsFollowSeeding(t *testing.T) {
-	searchBase := t.TempDir()
-	workDir := t.TempDir()
+// TestDoSessionLogsFollowTailShowsOnlyNewMessagesOnReadErrorExit exercises the
+// real follow path with an initial tail window and exits via the existing
+// consecutive-read-error threshold. Older pre-tail entries must be marked seen
+// from the initial snapshot so that follow-mode re-reads only emit messages
+// that arrived after the command started watching.
+func TestDoSessionLogsFollowTailShowsOnlyNewMessagesOnReadErrorExit(t *testing.T) {
+	initial := &sessionlog.Session{
+		Messages: []*sessionlog.Entry{
+			{
+				UUID:      "1",
+				Type:      "user",
+				Message:   jsonMessage(t, "user", "old msg"),
+				Timestamp: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+			},
+			{
+				UUID:      "2",
+				Type:      "system",
+				Subtype:   "compact_boundary",
+				Timestamp: time.Date(2025, 1, 1, 0, 0, 1, 0, time.UTC),
+			},
+			{
+				UUID:      "3",
+				Type:      "user",
+				Message:   jsonMessage(t, "user", "middle msg"),
+				Timestamp: time.Date(2025, 1, 1, 0, 0, 2, 0, time.UTC),
+			},
+			{
+				UUID:      "4",
+				Type:      "system",
+				Subtype:   "compact_boundary",
+				Timestamp: time.Date(2025, 1, 1, 0, 0, 3, 0, time.UTC),
+			},
+			{
+				UUID:      "5",
+				Type:      "user",
+				Message:   jsonMessage(t, "user", "recent msg"),
+				Timestamp: time.Date(2025, 1, 1, 0, 0, 4, 0, time.UTC),
+			},
+		},
+	}
+	withNew := &sessionlog.Session{
+		Messages: append(append([]*sessionlog.Entry{}, initial.Messages...),
+			&sessionlog.Entry{
+				UUID:      "6",
+				Type:      "assistant",
+				Message:   jsonMessage(t, "assistant", "fresh msg"),
+				Timestamp: time.Date(2025, 1, 1, 0, 0, 5, 0, time.UTC),
+			},
+		),
+	}
 
-	// Session with two compact boundaries: tail=1 shows only the last segment.
-	// Need 2 boundaries so sliceAtCompactBoundaries actually trims.
-	writeTestSession(t, searchBase, workDir,
-		`{"uuid":"1","parentUuid":"","type":"user","message":{"role":"user","content":"old msg"},"timestamp":"2025-01-01T00:00:00Z"}`,
-		`{"uuid":"2","parentUuid":"1","type":"system","subtype":"compact_boundary","message":{"role":"system","content":"compacted 1"},"timestamp":"2025-01-01T00:00:01Z"}`,
-		`{"uuid":"3","parentUuid":"2","type":"user","message":{"role":"user","content":"middle msg"},"timestamp":"2025-01-01T00:00:02Z"}`,
-		`{"uuid":"4","parentUuid":"3","type":"system","subtype":"compact_boundary","message":{"role":"system","content":"compacted 2"},"timestamp":"2025-01-01T00:00:03Z"}`,
-		`{"uuid":"5","parentUuid":"4","type":"user","message":{"role":"user","content":"recent msg"},"timestamp":"2025-01-01T00:00:04Z"}`,
+	var stdout, stderr bytes.Buffer
+	readCount := 0
+	code := runSessionLogs(
+		nil,
+		"",
+		"/ignored",
+		true,
+		1,
+		&stdout,
+		&stderr,
+		func(time.Duration) {},
+		func(_ *worker.Factory, _ string, _ string) (*worker.TranscriptSession, error) {
+			readCount++
+			switch readCount {
+			case 1:
+				return initial, nil
+			case 2:
+				return withNew, nil
+			default:
+				return nil, fmt.Errorf("boom %d", readCount)
+			}
+		},
 	)
-
-	path := sessionlog.FindSessionFile([]string{searchBase}, workDir)
-	if path == "" {
-		t.Fatal("session file not found")
+	if code != 1 {
+		t.Fatalf("code = %d, want 1 after injected consecutive read failures", code)
 	}
 
-	// Simulate what doSessionLogs does: initial tail=1 read, then seed seen
-	// map with tail=0. Verify "old msg" uuid is in seen even though it
-	// wasn't printed.
-	sess, err := sessionlog.ReadFile(path, 1)
-	if err != nil {
-		t.Fatal(err)
+	out := stdout.String()
+	if !strings.Contains(out, "recent msg") {
+		t.Fatalf("initial tail window should print the most recent existing entry, got: %s", out)
 	}
-
-	seen := make(map[string]bool)
-	for _, msg := range sess.Messages {
-		seen[msg.UUID] = true
+	if !strings.Contains(out, "fresh msg") {
+		t.Fatalf("follow mode should print the new message from the reread, got: %s", out)
 	}
-
-	// At this point, seen should NOT contain uuid "1" (it's before the boundary).
-	if seen["1"] {
-		t.Fatal("tail=1 should not include pre-boundary messages")
-	}
-
-	// Now simulate the seeding step (what doSessionLogs does before follow loop).
-	full, err := sessionlog.ReadFile(path, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, msg := range full.Messages {
-		seen[msg.UUID] = true
-	}
-
-	// After seeding, "1" should be in seen — preventing replay on re-read.
-	if !seen["1"] {
-		t.Error("after follow-mode seeding, pre-boundary message UUID should be in seen")
-	}
-
-	// Simulate a follow-mode re-read: no unseen messages should exist.
-	reread, err := sessionlog.ReadFile(path, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var unseen []string
-	for _, msg := range reread.Messages {
-		if !seen[msg.UUID] {
-			unseen = append(unseen, msg.UUID)
+	for _, forbidden := range []string{"old msg", "middle msg"} {
+		if strings.Contains(out, forbidden) {
+			t.Fatalf("follow mode should not replay pre-tail entry %q, got: %s", forbidden, out)
 		}
 	}
-	if len(unseen) > 0 {
-		t.Errorf("follow-mode re-read found unseen messages (would be replayed): %v", unseen)
+	if !strings.Contains(stderr.String(), "5 consecutive read errors") {
+		t.Fatalf("stderr should report the injected termination condition, got: %s", stderr.String())
 	}
+}
+
+func jsonMessage(t *testing.T, role, content string) []byte {
+	t.Helper()
+	return []byte(fmt.Sprintf(`{"role":%q,"content":%q}`, role, content))
 }
 
 func TestPrintLogEntryTimestamp(t *testing.T) {
