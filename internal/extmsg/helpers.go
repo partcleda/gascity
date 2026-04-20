@@ -109,7 +109,7 @@ func copyMetadata(in map[string]string) map[string]string {
 }
 
 func encodeMetadataFields(meta map[string]string, fields map[string]string) map[string]string {
-	out := make(map[string]string, len(fields)+len(meta))
+	out := make(map[string]string, len(fields))
 	for k, v := range fields {
 		if strings.TrimSpace(k) == "" {
 			continue
