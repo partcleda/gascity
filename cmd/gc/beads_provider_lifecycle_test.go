@@ -30,7 +30,9 @@ func freeLoopbackPort(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("Listen: %v", err)
 	}
-	defer listener.Close()
+	defer func() {
+		_ = listener.Close()
+	}()
 	addr, ok := listener.Addr().(*net.TCPAddr)
 	if !ok {
 		t.Fatalf("listener addr = %T, want *net.TCPAddr", listener.Addr())
