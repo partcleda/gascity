@@ -43,7 +43,7 @@ func discoverRootWithOptions(fs fsys.FS, root ScanRoot, opts ScanOptions) ([]Ord
 	if err := discoverSubdirectoryOrders(fs, root.Dir, found, func(name, source string, data []byte) error {
 		warnDeprecatedPath(opts, "warning: deprecated order path %s; rename to orders/%s.toml", source, name)
 		return add(name, source, data)
-	}); err != nil {
+	}, opts); err != nil {
 		return nil, err
 	}
 
@@ -52,7 +52,7 @@ func discoverRootWithOptions(fs fsys.FS, root ScanRoot, opts ScanOptions) ([]Ord
 		if err := discoverSubdirectoryOrders(fs, legacyDir, found, func(name, source string, data []byte) error {
 			warnDeprecatedPath(opts, "warning: deprecated order path %s; move to orders/%s.toml", source, name)
 			return add(name, source, data)
-		}); err != nil {
+		}, opts); err != nil {
 			return nil, err
 		}
 	}
@@ -123,7 +123,7 @@ func discoverFlatFiles(fs fsys.FS, dir string, found map[string]Order, add func(
 	return scan(true)
 }
 
-func discoverSubdirectoryOrders(fs fsys.FS, dir string, found map[string]Order, add func(name, source string, data []byte) error) error {
+func discoverSubdirectoryOrders(fs fsys.FS, dir string, found map[string]Order, add func(name, source string, data []byte) error, opts ScanOptions) error {
 	entries, err := fs.ReadDir(dir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -143,7 +143,7 @@ func discoverSubdirectoryOrders(fs fsys.FS, dir string, found map[string]Order, 
 		data, err := fs.ReadFile(source)
 		if err != nil {
 			if !errors.Is(err, os.ErrNotExist) {
-				warnUnreadablePath(ScanOptions{}, "warning: unreadable order path %s: %v", source, err)
+				warnUnreadablePath(opts, "warning: unreadable order path %s: %v", source, err)
 			}
 			continue
 		}
@@ -154,10 +154,7 @@ func discoverSubdirectoryOrders(fs fsys.FS, dir string, found map[string]Order, 
 	return nil
 }
 
-func warnUnreadablePath(opts ScanOptions, format string, args ...any) {
-	if opts.SuppressDeprecatedPathWarnings {
-		return
-	}
+func warnUnreadablePath(_ ScanOptions, format string, args ...any) {
 	log.Printf(format, args...)
 }
 

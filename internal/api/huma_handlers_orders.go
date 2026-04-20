@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -71,10 +72,11 @@ func (s *Server) humaHandleOrderCheck(_ context.Context, _ *OrderCheckInput) (*O
 	now := time.Now()
 	checks := make([]orderCheckResponse, 0, len(aa))
 	for _, a := range aa {
-		stores, err := orders.StoresForState(s.state, a)
+		storeInfos, err := orderStoreInfosForState(s.state, a)
 		if err != nil {
-			return nil, huma.Error500InternalServerError(err.Error())
+			storeInfos = nil
 		}
+		stores := storesFromWorkflowInfos(storeInfos)
 		result := orders.CheckTrigger(a, now, orders.LastRunAcrossStores(stores...), ep, orders.CursorAcrossStores(stores...))
 		cr := orderCheckResponse{
 			Name:       a.Name,
@@ -87,8 +89,8 @@ func (s *Server) humaHandleOrderCheck(_ context.Context, _ *OrderCheckInput) (*O
 			ts := result.LastRun.Format(time.RFC3339)
 			cr.LastRun = &ts
 		}
-		if results, err := orders.HistoryBeadsAcrossStores(stores, a.ScopedName()); err == nil && len(results) > 0 {
-			outcome := lastRunOutcomeFromLabels(results[0].Labels)
+		if results, err := orderHistoryBeadsAcrossStoreInfos(storeInfos, a.ScopedName(), 1, time.Time{}); err == nil && len(results) > 0 {
+			outcome := lastRunOutcomeFromLabels(results[0].bead.Labels)
 			if outcome != "" {
 				cr.LastRunOutcome = &outcome
 			}
@@ -164,22 +166,22 @@ func (s *Server) humaHandleOrderHistory(_ context.Context, input *OrderHistoryIn
 			orderDef.Rig = scopedName[idx+5:]
 		}
 	}
-	stores, err := orders.StoresForState(s.state, orderDef)
+	storeInfos, err := orderStoreInfosForState(s.state, orderDef)
 	if err != nil {
+		if errors.Is(err, errNoOrderStores) {
+			return nil, huma.Error503ServiceUnavailable(err.Error())
+		}
 		return nil, huma.Error500InternalServerError(err.Error())
 	}
 
-	results, err := orders.HistoryBeadsAcrossStores(stores, scopedName)
+	results, err := orderHistoryBeadsAcrossStoreInfos(storeInfos, scopedName, limit, beforeTime)
 	if err != nil {
 		return nil, huma.Error500InternalServerError(err.Error())
 	}
 
 	entries := make([]orderHistoryEntry, 0, len(results))
-	for _, b := range results {
-		if !beforeTime.IsZero() && !b.CreatedAt.Before(beforeTime) {
-			continue
-		}
-
+	for _, result := range results {
+		b := result.bead
 		name := scopedName
 		rig := ""
 		if auto != nil {
@@ -192,6 +194,7 @@ func (s *Server) humaHandleOrderHistory(_ context.Context, input *OrderHistoryIn
 
 		entry := orderHistoryEntry{
 			BeadID:        b.ID,
+			StoreRef:      result.storeRef,
 			Name:          name,
 			ScopedName:    scopedName,
 			Rig:           rig,
@@ -225,6 +228,7 @@ func (s *Server) humaHandleOrderHistory(_ context.Context, input *OrderHistoryIn
 // orderHistoryEntry is a single entry in the order history response.
 type orderHistoryEntry struct {
 	BeadID        string   `json:"bead_id"`
+	StoreRef      string   `json:"store_ref"`
 	Name          string   `json:"name"`
 	ScopedName    string   `json:"scoped_name"`
 	Rig           string   `json:"rig,omitempty"`
@@ -245,19 +249,24 @@ func (s *Server) humaHandleOrderHistoryDetail(_ context.Context, input *OrderHis
 }, error,
 ) {
 	storeInfos := workflowStores(s.state)
-	stores := make([]beads.Store, 0, len(storeInfos))
-	for _, info := range storeInfos {
-		if info.store != nil {
-			stores = append(stores, info.store)
+	if input.StoreRef != "" {
+		info, ok := workflowStoreByRef(s.state, input.StoreRef)
+		if !ok {
+			return nil, huma.Error404NotFound("store not found")
 		}
+		storeInfos = []workflowStoreInfo{info}
 	}
-	b, err := orders.HistoryBeadAcrossStores(stores, input.BeadID)
+	result, err := orderHistoryBeadAcrossStoreInfos(storeInfos, input.BeadID)
 	if err != nil {
 		if errors.Is(err, beads.ErrNotFound) {
 			return nil, huma.Error404NotFound("bead not found")
 		}
+		if errors.Is(err, errNoOrderStores) {
+			return nil, huma.Error503ServiceUnavailable(err.Error())
+		}
 		return nil, huma.Error500InternalServerError(err.Error())
 	}
+	b := result.bead
 
 	output := ""
 	if b.Metadata != nil {
@@ -276,6 +285,7 @@ func (s *Server) humaHandleOrderHistoryDetail(_ context.Context, input *OrderHis
 		Body orderHistoryDetailResponse
 	}{Body: orderHistoryDetailResponse{
 		BeadID:    b.ID,
+		StoreRef:  result.storeRef,
 		CreatedAt: b.CreatedAt.Format(time.RFC3339),
 		Labels:    b.Labels,
 		Output:    output,
@@ -285,9 +295,127 @@ func (s *Server) humaHandleOrderHistoryDetail(_ context.Context, input *OrderHis
 // orderHistoryDetailResponse is the response for GET /v0/order/history/{bead_id}.
 type orderHistoryDetailResponse struct {
 	BeadID    string   `json:"bead_id"`
+	StoreRef  string   `json:"store_ref"`
 	CreatedAt string   `json:"created_at"`
 	Labels    []string `json:"labels"`
 	Output    string   `json:"output"`
+}
+
+type orderHistoryStoreBead struct {
+	storeRef string
+	bead     beads.Bead
+}
+
+func orderStoreInfosForState(state State, a orders.Order) ([]workflowStoreInfo, error) {
+	cityName := workflowCityScopeRef(state.CityName())
+	infos := make([]workflowStoreInfo, 0, 2)
+	if strings.TrimSpace(a.Rig) != "" {
+		if rigStore := state.BeadStore(a.Rig); rigStore != nil {
+			infos = append(infos, workflowStoreInfo{
+				ref:       "rig:" + a.Rig,
+				scopeKind: "rig",
+				scopeRef:  a.Rig,
+				store:     rigStore,
+			})
+		}
+	}
+
+	if cityStore := state.CityBeadStore(); cityStore != nil {
+		infos = append(infos, workflowStoreInfo{
+			ref:       "city:" + cityName,
+			scopeKind: "city",
+			scopeRef:  cityName,
+			store:     cityStore,
+		})
+	}
+
+	if len(infos) == 0 {
+		return nil, errNoOrderStores
+	}
+	return infos, nil
+}
+
+func storesFromWorkflowInfos(infos []workflowStoreInfo) []beads.Store {
+	stores := make([]beads.Store, 0, len(infos))
+	for _, info := range infos {
+		if info.store != nil {
+			stores = append(stores, info.store)
+		}
+	}
+	return stores
+}
+
+func orderHistoryBeadsAcrossStoreInfos(infos []workflowStoreInfo, scopedName string, limit int, beforeTime time.Time) ([]orderHistoryStoreBead, error) {
+	if len(infos) == 0 {
+		return nil, errNoOrderStores
+	}
+
+	label := "order-run:" + scopedName
+	seen := make(map[string]bool)
+	results := make([]orderHistoryStoreBead, 0)
+	for i, info := range infos {
+		if info.store == nil {
+			continue
+		}
+		rows, err := info.store.List(beads.ListQuery{
+			Label:         label,
+			CreatedBefore: beforeTime,
+			Limit:         limit,
+			IncludeClosed: true,
+			Sort:          beads.SortCreatedDesc,
+		})
+		if err != nil {
+			if i == 0 {
+				return nil, err
+			}
+			log.Printf("api: order history list failed for %s: %v", info.ref, err)
+			continue
+		}
+		for _, row := range rows {
+			if !beforeTime.IsZero() && !row.CreatedAt.Before(beforeTime) {
+				continue
+			}
+			key := info.ref + "\x00" + row.ID
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			results = append(results, orderHistoryStoreBead{storeRef: info.ref, bead: row})
+		}
+	}
+
+	sort.SliceStable(results, func(i, j int) bool {
+		return results[i].bead.CreatedAt.After(results[j].bead.CreatedAt)
+	})
+	if limit > 0 && len(results) > limit {
+		results = results[:limit]
+	}
+	return results, nil
+}
+
+func orderHistoryBeadAcrossStoreInfos(infos []workflowStoreInfo, beadID string) (orderHistoryStoreBead, error) {
+	if len(infos) == 0 {
+		return orderHistoryStoreBead{}, errNoOrderStores
+	}
+
+	var lastErr error
+	for _, info := range infos {
+		if info.store == nil {
+			continue
+		}
+		bead, err := info.store.Get(beadID)
+		if err == nil {
+			return orderHistoryStoreBead{storeRef: info.ref, bead: bead}, nil
+		}
+		if errors.Is(err, beads.ErrNotFound) {
+			continue
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return orderHistoryStoreBead{}, lastErr
+	}
+	return orderHistoryStoreBead{}, beads.ErrNotFound
 }
 
 // humaHandleOrderEnable is the Huma-typed handler for POST /v0/order/{name}/enable.

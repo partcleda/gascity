@@ -30,6 +30,7 @@ type monitorFeedItemResponse struct {
 	WorkflowID         string `json:"workflow_id,omitempty"`
 	RootBeadID         string `json:"root_bead_id,omitempty"`
 	RootStoreRef       string `json:"root_store_ref,omitempty"`
+	StoreRef           string `json:"store_ref,omitempty"`
 	AttachedBeadID     string `json:"attached_bead_id,omitempty"`
 	LogicalBeadID      string `json:"logical_bead_id,omitempty"`
 	RunDetailAvailable bool   `json:"run_detail_available,omitempty"`
@@ -337,7 +338,7 @@ func buildOrderRunFeedItems(state State, requestedScopeKind, requestedScopeRef s
 			target := orderTrackingTarget(orderDef, ok, bead)
 			itemType := orderTrackingType(orderDef, ok, bead)
 			item := monitorFeedItemResponse{
-				ID:                 "order:" + bead.ID,
+				ID:                 "order:" + info.ref + ":" + bead.ID,
 				Type:               itemType,
 				Status:             normalizeMonitorStatus(orderTrackingStatus(bead)),
 				Title:              title,
@@ -347,6 +348,7 @@ func buildOrderRunFeedItems(state State, requestedScopeKind, requestedScopeRef s
 				StartedAt:          bead.CreatedAt.Format(time.RFC3339Nano),
 				UpdatedAt:          updatedAt.Format(time.RFC3339Nano),
 				BeadID:             bead.ID,
+				StoreRef:           info.ref,
 				DetailAvailable:    ok && orderDef.IsExec(),
 				RunDetailAvailable: ok && orderDef.IsExec(),
 			}
@@ -354,7 +356,7 @@ func buildOrderRunFeedItems(state State, requestedScopeKind, requestedScopeRef s
 		}
 	}
 
-	if len(items) == 0 && requestedScopeErr != nil && !includeAllForCity {
+	if requestedScopeErr != nil && !includeAllForCity {
 		return orderRunFeedResult{}, requestedScopeErr
 	}
 

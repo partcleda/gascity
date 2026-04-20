@@ -14,6 +14,7 @@ import (
 var (
 	errOrderNotFound  = errors.New("order not found")
 	errOrderAmbiguous = errors.New("ambiguous order name")
+	errNoOrderStores  = errors.New("order bead stores unavailable")
 )
 
 type orderResponse struct {
