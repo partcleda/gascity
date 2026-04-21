@@ -161,7 +161,7 @@ func newSessionProviderForCity(cfg *config.City, cityPath string) runtime.Provid
 }
 
 func loadProviderSessionSnapshot(ctx sessionProviderContext) *sessionBeadSnapshot {
-	if ctx.cityPath == "" || ctx.providerName == "acp" || !hasACPAgents(ctx.agents) {
+	if ctx.cityPath == "" || ctx.providerName == "acp" {
 		return nil
 	}
 	store, err := openSessionProviderStore(ctx.cityPath)
@@ -176,28 +176,35 @@ func loadProviderSessionSnapshot(ctx sessionProviderContext) *sessionBeadSnapsho
 }
 
 func newSessionProviderFromContext(ctx sessionProviderContext, sessionBeads *sessionBeadSnapshot) runtime.Provider {
-	sp, err := newSessionProviderByName(ctx.providerName, ctx.sc, ctx.cityName, ctx.cityPath)
+	sp, err := newSessionProviderFromContextWithError(ctx, sessionBeads)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err) //nolint:errcheck // best-effort stderr
 		os.Exit(1)
+	}
+	return sp
+}
+
+func newSessionProviderFromContextWithError(ctx sessionProviderContext, sessionBeads *sessionBeadSnapshot) (runtime.Provider, error) {
+	sp, err := newSessionProviderByName(ctx.providerName, ctx.sc, ctx.cityName, ctx.cityPath)
+	if err != nil {
+		return nil, err
 	}
 	// If the city-level provider is not ACP but some agents need ACP,
 	// wrap in an auto provider that routes per-session.
 	// NOTE: agents comes from loadCityConfig which applies pack overrides,
 	// so the Session field from overrides is already resolved here.
-	if ctx.providerName != "acp" && hasACPAgents(ctx.agents) {
+	if ctx.providerName != "acp" && needsACPProviderWrapper(sessionBeads, ctx.cfg) {
 		acpSP, acpErr := newSessionProviderByName("acp", ctx.sc, ctx.cityName, ctx.cityPath)
 		if acpErr != nil {
-			fmt.Fprintf(os.Stderr, "acp provider: %v\n", acpErr) //nolint:errcheck // best-effort stderr
-			os.Exit(1)
+			return nil, fmt.Errorf("acp provider: %w", acpErr)
 		}
 		autoSP := sessionauto.New(sp, acpSP)
-		for _, sessName := range configuredACPSessionNames(sessionBeads, ctx.cityName, ctx.sessionTemplate, ctx.agents) {
+		for _, sessName := range configuredACPRouteNames(sessionBeads, ctx.cityName, ctx.cfg) {
 			autoSP.RouteACP(sessName)
 		}
-		return autoSP
+		return autoSP, nil
 	}
-	return sp
+	return sp, nil
 }
 
 // hasACPAgents reports whether any agent in the config uses session = "acp".
@@ -226,6 +233,74 @@ func configuredACPSessionNames(snapshot *sessionBeadSnapshot, cityName, sessionT
 			}
 		}
 		names = append(names, sessName)
+	}
+	return names
+}
+
+func needsACPProviderWrapper(snapshot *sessionBeadSnapshot, cfg *config.City) bool {
+	return len(observedACPSessionNames(snapshot)) > 0 || (cfg != nil && hasACPAgents(cfg.Agents))
+}
+
+func observedACPSessionNames(snapshot *sessionBeadSnapshot) []string {
+	if snapshot == nil {
+		return nil
+	}
+	names := make([]string, 0, len(snapshot.open))
+	seen := make(map[string]bool, len(snapshot.open))
+	for _, bead := range snapshot.Open() {
+		if !beadUsesACPTransport(bead) {
+			continue
+		}
+		sessionName := strings.TrimSpace(bead.Metadata["session_name"])
+		if sessionName == "" || seen[sessionName] {
+			continue
+		}
+		seen[sessionName] = true
+		names = append(names, sessionName)
+	}
+	return names
+}
+
+func beadUsesACPTransport(bead beads.Bead) bool {
+	transport := strings.TrimSpace(bead.Metadata["transport"])
+	if transport != "" {
+		return transport == "acp"
+	}
+	return strings.TrimSpace(bead.Metadata["provider"]) == "acp"
+}
+
+func configuredACPRouteNames(snapshot *sessionBeadSnapshot, cityName string, cfg *config.City) []string {
+	names := observedACPSessionNames(snapshot)
+	seen := make(map[string]bool, len(names))
+	for _, name := range names {
+		seen[name] = true
+	}
+	if cfg == nil {
+		return names
+	}
+	for _, name := range configuredACPSessionNames(snapshot, cityName, cfg.Workspace.SessionTemplate, cfg.Agents) {
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	for _, named := range cfg.NamedSessions {
+		agentCfg := config.FindAgent(cfg, named.TemplateQualifiedName())
+		if agentCfg == nil || agentCfg.Session != "acp" {
+			continue
+		}
+		sessionName := config.NamedSessionRuntimeName(cityName, cfg.Workspace, named.QualifiedName())
+		if snapshot != nil {
+			if snapName := snapshot.FindSessionNameByNamedIdentity(named.QualifiedName()); snapName != "" {
+				sessionName = snapName
+			}
+		}
+		if sessionName == "" || seen[sessionName] {
+			continue
+		}
+		seen[sessionName] = true
+		names = append(names, sessionName)
 	}
 	return names
 }

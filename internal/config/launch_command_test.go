@@ -78,9 +78,8 @@ func TestBuildProviderLaunchCommandIgnoresInitialMessageOverride(t *testing.T) {
 
 func TestBuildProviderLaunchCommandUsesACPCommand(t *testing.T) {
 	rp := &ResolvedProvider{
-		Command:    "opencode",
-		ACPCommand: "opencode",
-		ACPArgs:    []string{"acp"},
+		Command: "custom-opencode",
+		ACPArgs: []string{"acp"},
 	}
 
 	t.Run("acp transport uses ACPCommandString", func(t *testing.T) {
@@ -88,7 +87,7 @@ func TestBuildProviderLaunchCommandUsesACPCommand(t *testing.T) {
 		if err != nil {
 			t.Fatalf("BuildProviderLaunchCommand: %v", err)
 		}
-		want := "opencode acp"
+		want := "custom-opencode acp"
 		if got.Command != want {
 			t.Fatalf("Command = %q, want %q", got.Command, want)
 		}
@@ -99,7 +98,7 @@ func TestBuildProviderLaunchCommandUsesACPCommand(t *testing.T) {
 		if err != nil {
 			t.Fatalf("BuildProviderLaunchCommand: %v", err)
 		}
-		want := "opencode"
+		want := "custom-opencode"
 		if got.Command != want {
 			t.Fatalf("Command = %q, want %q", got.Command, want)
 		}

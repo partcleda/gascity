@@ -119,7 +119,7 @@ func materializeSessionForTemplateWithOptions(
 		if err != nil {
 			return "", err
 		}
-		sessionCommand, err := resolvedSessionCommand(cityPath, resolved, nil)
+		sessionCommand, err := resolvedSessionCommand(cityPath, resolved, nil, spec.Agent.Session)
 		if err != nil {
 			return "", err
 		}
@@ -272,7 +272,7 @@ func materializeSessionForAgentConfig(cityPath string, cfg *config.City, store b
 	if err != nil {
 		return "", err
 	}
-	sessionCommand, err := resolvedSessionCommand(cityPath, resolved, nil)
+	sessionCommand, err := resolvedSessionCommand(cityPath, resolved, nil, agentCfg.Session)
 	if err != nil {
 		return "", err
 	}

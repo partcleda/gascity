@@ -234,7 +234,8 @@ func (s *Server) humaCreateProviderSession(ctx context.Context, store beads.Stor
 		return nil, humaSessionManagerError(err)
 	}
 
-	launchCommand, err := config.BuildProviderLaunchCommand(s.state.CityPath(), resolved, body.Options, "")
+	transport := providerSessionTransport(resolved, s.state.SessionProvider())
+	launchCommand, err := config.BuildProviderLaunchCommand(s.state.CityPath(), resolved, body.Options, transport)
 	if err != nil {
 		return nil, huma.Error400BadRequest(err.Error())
 	}
@@ -257,7 +258,7 @@ func (s *Server) humaCreateProviderSession(ctx context.Context, store beads.Stor
 			command,
 			workDir,
 			resolved.Name,
-			"",
+			transport,
 			resolved.Env,
 			resume,
 			hints,

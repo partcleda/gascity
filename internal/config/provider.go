@@ -228,6 +228,15 @@ func (rp *ResolvedProvider) ACPCommandString() string {
 	return cmd + " " + shellquote.Join(args)
 }
 
+// DefaultSessionTransport returns the transport used for provider-backed
+// sessions when no template-level session override exists.
+func (rp *ResolvedProvider) DefaultSessionTransport() string {
+	if rp != nil && rp.SupportsACP {
+		return "acp"
+	}
+	return ""
+}
+
 // TitleModelFlagArgs resolves the TitleModel key against the "model"
 // OptionsSchema entry. Returns the CLI flag args for the title model,
 // or nil if TitleModel is empty or not found in the schema.

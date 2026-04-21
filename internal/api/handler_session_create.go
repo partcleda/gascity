@@ -274,7 +274,8 @@ func (s *Server) createProviderSession(w http.ResponseWriter, r *http.Request, s
 		return
 	}
 
-	launchCommand, err := config.BuildProviderLaunchCommand(s.state.CityPath(), resolved, body.Options, "")
+	transport := providerSessionTransport(resolved, s.state.SessionProvider())
+	launchCommand, err := config.BuildProviderLaunchCommand(s.state.CityPath(), resolved, body.Options, transport)
 	if err != nil {
 		s.idem.unreserve(idemKey)
 		if errors.Is(err, config.ErrUnknownOption) {
@@ -286,7 +287,7 @@ func (s *Server) createProviderSession(w http.ResponseWriter, r *http.Request, s
 	}
 	command := launchCommand.Command
 
-	resolvedCfg, err := resolvedSessionConfigForProvider(alias, "", template, title, "", map[string]string{
+	resolvedCfg, err := resolvedSessionConfigForProvider(alias, "", template, title, transport, map[string]string{
 		"session_origin": "manual",
 	}, resolved, command, workDir)
 	if err != nil {

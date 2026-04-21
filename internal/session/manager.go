@@ -65,6 +65,7 @@ type Info struct {
 	Title         string
 	Alias         string
 	Provider      string
+	Transport     string
 	Command       string // resolved command stored at creation
 	WorkDir       string
 	SessionName   string // tmux session name
@@ -158,12 +159,27 @@ func (m *Manager) transportForBead(b beads.Bead, sessName string) (string, bool)
 	if transport != "" {
 		return transport, false
 	}
+	if strings.TrimSpace(b.Metadata["pending_create_claim"]) == "true" {
+		if m.transportResolver != nil {
+			transport = normalizeTransport(b.Metadata["provider"], m.transportResolver(strings.TrimSpace(b.Metadata["template"])))
+			if transport != "" {
+				return transport, true
+			}
+		}
+		return "", false
+	}
 	if detector, ok := m.sp.(transportDetector); ok {
 		transport = normalizeTransport(b.Metadata["provider"], detector.DetectTransport(sessName))
 		if transport != "" {
 			return transport, true
 		}
 	}
+	if m.sp != nil && m.sp.IsRunning(sessName) {
+		return "", false
+	}
+	// Stopped legacy sessions without persisted transport metadata must keep
+	// their stored runtime semantics. Only pending-create beads use config
+	// inference because they have not materialized yet.
 	return "", false
 }
 
@@ -1138,8 +1154,9 @@ func (m *Manager) infoFromBead(b beads.Bead) Info {
 		sessName = sessionNameFor(b.ID)
 	}
 	closed := b.Status == "closed"
+	transport := transportFromMetadata(b)
 	if !closed {
-		transport, _ := m.transportForBead(b, sessName)
+		transport, _ = m.transportForBead(b, sessName)
 		_ = m.routeACPIfNeeded(b.Metadata["provider"], transport, sessName)
 	}
 
@@ -1160,6 +1177,7 @@ func (m *Manager) infoFromBead(b beads.Bead) Info {
 		Title:         b.Title,
 		Alias:         b.Metadata["alias"],
 		Provider:      b.Metadata["provider"],
+		Transport:     transport,
 		Command:       b.Metadata["command"],
 		WorkDir:       b.Metadata["work_dir"],
 		SessionName:   sessName,

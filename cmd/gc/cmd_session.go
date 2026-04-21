@@ -223,7 +223,7 @@ func cmdSessionNew(args []string, alias, title, titleHint string, noAttach bool,
 	if err != nil {
 		titleProvider = nil
 	}
-	sessionCommand, err := resolvedSessionCommand(cityPath, resolved, nil)
+	sessionCommand, err := resolvedSessionCommand(cityPath, resolved, nil, found.Session)
 	if err != nil {
 		fmt.Fprintf(stderr, "gc session new: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
@@ -401,11 +401,11 @@ func maybeAutoTitle(store beads.Store, beadID, userTitle, titleHint string, prov
 	})
 }
 
-func resolvedSessionCommand(cityPath string, resolved *config.ResolvedProvider, optionOverrides map[string]string) (string, error) {
+func resolvedSessionCommand(cityPath string, resolved *config.ResolvedProvider, optionOverrides map[string]string, transport string) (string, error) {
 	if resolved == nil {
 		return "", fmt.Errorf("resolved provider is nil")
 	}
-	launchCommand, err := config.BuildProviderLaunchCommand(cityPath, resolved, optionOverrides, "")
+	launchCommand, err := config.BuildProviderLaunchCommand(cityPath, resolved, optionOverrides, transport)
 	if err != nil {
 		return "", fmt.Errorf("resolving provider launch command: %w", err)
 	}

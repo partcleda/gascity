@@ -1,6 +1,7 @@
 package config
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -184,6 +185,12 @@ func TestBuiltinProvidersOpenCode(t *testing.T) {
 	p := BuiltinProviders()["opencode"]
 	if p.Command != "opencode" {
 		t.Errorf("Command = %q, want %q", p.Command, "opencode")
+	}
+	if p.ACPCommand != "" {
+		t.Errorf("ACPCommand = %q, want empty fallback to Command", p.ACPCommand)
+	}
+	if !reflect.DeepEqual(p.ACPArgs, []string{"acp"}) {
+		t.Errorf("ACPArgs = %v, want [acp]", p.ACPArgs)
 	}
 	if p.PromptMode != "none" {
 		t.Errorf("PromptMode = %q, want %q", p.PromptMode, "none")

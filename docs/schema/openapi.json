@@ -4598,6 +4598,21 @@
       "ProviderPatch": {
         "additionalProperties": false,
         "properties": {
+          "ACPArgs": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "ACPCommand": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "Args": {
             "items": {
               "type": "string"
@@ -4679,7 +4694,9 @@
           "Name",
           "Base",
           "Command",
+          "ACPCommand",
           "Args",
+          "ACPArgs",
           "ArgsAppend",
           "OptionsSchemaMerge",
           "PromptMode",

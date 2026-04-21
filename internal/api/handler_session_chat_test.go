@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/gastownhall/gascity/internal/config"
+	"github.com/gastownhall/gascity/internal/runtime"
+	sessionauto "github.com/gastownhall/gascity/internal/runtime/auto"
 	"github.com/gastownhall/gascity/internal/session"
 	"github.com/gastownhall/gascity/internal/shellquote"
 )
@@ -168,5 +170,181 @@ func TestBuildSessionResumeRebuildsBareStoredCommandForPoolClaudeAgent(t *testin
 	}
 	if !strings.Contains(cmd, "--settings") {
 		t.Fatalf("resume command missing settings arg:\n  got: %s", cmd)
+	}
+}
+
+func TestBuildSessionResumeUsesStoredACPCommandForProviderSession(t *testing.T) {
+	supportsACP := true
+	fs := newSessionFakeState(t)
+	fs.cfg = &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Providers: map[string]config.ProviderSpec{
+			"opencode": {
+				DisplayName: "OpenCode",
+				Command:     "/bin/echo",
+				PathCheck:   "true",
+				SupportsACP: &supportsACP,
+				ACPCommand:  "/bin/echo",
+				ACPArgs:     []string{"acp"},
+			},
+		},
+	}
+
+	state := &stateWithSessionProvider{
+		fakeState: fs,
+		provider:  sessionauto.New(runtime.NewFake(), runtime.NewFake()),
+	}
+	srv := New(state)
+	info := session.Info{
+		ID:        "gc-1",
+		Template:  "opencode",
+		Command:   "/bin/echo",
+		Provider:  "opencode",
+		Transport: "acp",
+		WorkDir:   "/tmp/workdir",
+	}
+
+	cmd, _ := srv.buildSessionResume(info)
+	if got, want := cmd, "/bin/echo acp"; got != want {
+		t.Fatalf("resume command = %q, want %q", got, want)
+	}
+}
+
+func TestBuildSessionResumeKeepsDefaultCommandWithoutACPTransportProvider(t *testing.T) {
+	supportsACP := true
+	fs := newSessionFakeState(t)
+	fs.cfg = &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Providers: map[string]config.ProviderSpec{
+			"opencode": {
+				DisplayName: "OpenCode",
+				Command:     "/bin/echo",
+				PathCheck:   "true",
+				SupportsACP: &supportsACP,
+				ACPCommand:  "/bin/echo",
+				ACPArgs:     []string{"acp"},
+			},
+		},
+	}
+
+	srv := New(fs)
+	info := session.Info{
+		ID:       "gc-1",
+		Template: "opencode",
+		Command:  "/bin/echo",
+		Provider: "opencode",
+		WorkDir:  "/tmp/workdir",
+	}
+
+	cmd, _ := srv.buildSessionResume(info)
+	if got, want := cmd, "/bin/echo"; got != want {
+		t.Fatalf("resume command = %q, want %q", got, want)
+	}
+}
+
+func TestBuildSessionResumeKeepsDefaultCommandForLegacyProviderSessionWithoutTransportMetadata(t *testing.T) {
+	supportsACP := true
+	fs := newSessionFakeState(t)
+	fs.cfg = &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Providers: map[string]config.ProviderSpec{
+			"opencode": {
+				DisplayName: "OpenCode",
+				Command:     "/bin/echo",
+				PathCheck:   "true",
+				SupportsACP: &supportsACP,
+				ACPCommand:  "/bin/echo",
+				ACPArgs:     []string{"acp"},
+			},
+		},
+	}
+
+	state := &stateWithSessionProvider{
+		fakeState: fs,
+		provider:  sessionauto.New(runtime.NewFake(), runtime.NewFake()),
+	}
+	srv := New(state)
+	info := session.Info{
+		ID:       "gc-1",
+		Template: "opencode",
+		Command:  "/bin/echo",
+		Provider: "opencode",
+		WorkDir:  "/tmp/workdir",
+	}
+
+	cmd, _ := srv.buildSessionResume(info)
+	if got, want := cmd, "/bin/echo"; got != want {
+		t.Fatalf("resume command = %q, want %q", got, want)
+	}
+}
+
+func TestBuildSessionResumeUsesStoredACPTransportForTemplateSession(t *testing.T) {
+	supportsACP := true
+	fs := newSessionFakeState(t)
+	fs.cfg = &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Agents: []config.Agent{
+			{Name: "worker", Provider: "opencode", Session: "acp"},
+		},
+		Providers: map[string]config.ProviderSpec{
+			"opencode": {
+				DisplayName: "OpenCode",
+				Command:     "/bin/echo",
+				PathCheck:   "true",
+				SupportsACP: &supportsACP,
+				ACPCommand:  "/bin/echo",
+				ACPArgs:     []string{"acp"},
+			},
+		},
+	}
+
+	srv := New(fs)
+	info := session.Info{
+		ID:        "gc-1",
+		Template:  "worker",
+		Command:   "/bin/echo",
+		Provider:  "opencode",
+		Transport: "acp",
+		WorkDir:   "/tmp/workdir",
+	}
+
+	cmd, _ := srv.buildSessionResume(info)
+	if got, want := cmd, "/bin/echo acp"; got != want {
+		t.Fatalf("resume command = %q, want %q", got, want)
+	}
+}
+
+func TestBuildSessionResumeKeepsDefaultCommandForLegacyTemplateSessionWithoutTransportMetadata(t *testing.T) {
+	supportsACP := true
+	fs := newSessionFakeState(t)
+	fs.cfg = &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Agents: []config.Agent{
+			{Name: "worker", Provider: "opencode", Session: "acp"},
+		},
+		Providers: map[string]config.ProviderSpec{
+			"opencode": {
+				DisplayName: "OpenCode",
+				Command:     "/bin/echo",
+				PathCheck:   "true",
+				SupportsACP: &supportsACP,
+				ACPCommand:  "/bin/echo",
+				ACPArgs:     []string{"acp"},
+			},
+		},
+	}
+
+	srv := New(fs)
+	info := session.Info{
+		ID:       "gc-1",
+		Template: "worker",
+		Command:  "/bin/echo",
+		Provider: "opencode",
+		WorkDir:  "/tmp/workdir",
+	}
+
+	cmd, _ := srv.buildSessionResume(info)
+	if got, want := cmd, "/bin/echo"; got != want {
+		t.Fatalf("resume command = %q, want %q", got, want)
 	}
 }

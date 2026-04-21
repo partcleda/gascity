@@ -457,8 +457,6 @@ func TestProviderFieldSync(t *testing.T) {
 		"SessionIDFlag":          "internal session-id config, not patched",
 		"PrintArgs":              "internal print-mode args, not patched",
 		"TitleModel":             "internal title-model key, not patched",
-		"ACPCommand":             "ACP transport override, not patched (set via builtin or city.toml)",
-		"ACPArgs":                "ACP transport override, not patched (set via builtin or city.toml)",
 	}
 
 	// Fields on ProviderPatch that don't map 1:1 to ProviderSpec.

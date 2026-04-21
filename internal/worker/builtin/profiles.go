@@ -304,7 +304,6 @@ var builtinProviderSpecs = map[string]BuiltinProviderSpec{
 		SupportsACP:      true,
 		SupportsHooks:    true,
 		InstructionsFile: "AGENTS.md",
-		ACPCommand:       "opencode",
 		ACPArgs:          []string{"acp"},
 	},
 	"auggie": {

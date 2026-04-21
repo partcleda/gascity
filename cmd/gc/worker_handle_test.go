@@ -199,6 +199,152 @@ func TestResolvedWorkerRuntimeResumesPoolSessionPreservesLaunchFlags(t *testing.
 	}
 }
 
+func TestResolvedWorkerRuntimeWithConfigUsesStoredTemplateACPTransport(t *testing.T) {
+	cityDir := t.TempDir()
+	writePhase0InterfaceCity(t, cityDir, `[workspace]
+name = "test-city"
+
+[beads]
+provider = "file"
+
+[[agent]]
+name = "worker"
+provider = "stub"
+session = "acp"
+
+[providers.stub]
+command = "/bin/echo"
+supports_acp = true
+acp_command = "/bin/echo"
+acp_args = ["acp"]
+`)
+
+	cfg, err := loadCityConfig(cityDir)
+	if err != nil {
+		t.Fatalf("loadCityConfig: %v", err)
+	}
+
+	resolved := resolvedWorkerRuntimeWithConfig(cityDir, cfg, session.Info{
+		Template:  "worker",
+		Command:   "/bin/echo",
+		Transport: "acp",
+		WorkDir:   cityDir,
+	}, "")
+	if resolved == nil {
+		t.Fatal("resolvedWorkerRuntimeWithConfig() = nil")
+	}
+	if got, want := resolved.Command, "/bin/echo acp"; got != want {
+		t.Fatalf("Command = %q, want %q", got, want)
+	}
+}
+
+func TestResolvedWorkerRuntimeWithConfigKeepsDefaultTransportWithoutStoredTemplateACPMetadata(t *testing.T) {
+	cityDir := t.TempDir()
+	writePhase0InterfaceCity(t, cityDir, `[workspace]
+name = "test-city"
+
+[beads]
+provider = "file"
+
+[[agent]]
+name = "worker"
+provider = "stub"
+session = "acp"
+
+[providers.stub]
+command = "/bin/echo"
+supports_acp = true
+acp_command = "/bin/echo"
+acp_args = ["acp"]
+`)
+
+	cfg, err := loadCityConfig(cityDir)
+	if err != nil {
+		t.Fatalf("loadCityConfig: %v", err)
+	}
+
+	resolved := resolvedWorkerRuntimeWithConfig(cityDir, cfg, session.Info{
+		Template: "worker",
+		Command:  "/bin/echo",
+		WorkDir:  cityDir,
+	}, "")
+	if resolved == nil {
+		t.Fatal("resolvedWorkerRuntimeWithConfig() = nil")
+	}
+	if got, want := resolved.Command, "/bin/echo"; got != want {
+		t.Fatalf("Command = %q, want %q", got, want)
+	}
+}
+
+func TestResolvedWorkerRuntimeWithConfigUsesStoredACPTransportForProviderSession(t *testing.T) {
+	cityDir := t.TempDir()
+	writePhase0InterfaceCity(t, cityDir, `[workspace]
+name = "test-city"
+
+[beads]
+provider = "file"
+
+[providers.opencode]
+command = "/bin/echo"
+path_check = "true"
+supports_acp = true
+acp_command = "/bin/echo"
+acp_args = ["acp"]
+`)
+
+	cfg, err := loadCityConfig(cityDir)
+	if err != nil {
+		t.Fatalf("loadCityConfig: %v", err)
+	}
+
+	resolved := resolvedWorkerRuntimeWithConfig(cityDir, cfg, session.Info{
+		Template:  "opencode",
+		Command:   "/bin/echo",
+		Transport: "acp",
+		WorkDir:   cityDir,
+	}, "provider")
+	if resolved == nil {
+		t.Fatal("resolvedWorkerRuntimeWithConfig() = nil")
+	}
+	if got, want := resolved.Command, "/bin/echo acp"; got != want {
+		t.Fatalf("Command = %q, want %q", got, want)
+	}
+}
+
+func TestResolvedWorkerRuntimeWithConfigKeepsDefaultTransportForLegacyProviderSessionWithoutMetadata(t *testing.T) {
+	cityDir := t.TempDir()
+	writePhase0InterfaceCity(t, cityDir, `[workspace]
+name = "test-city"
+
+[beads]
+provider = "file"
+
+[providers.opencode]
+command = "/bin/echo"
+path_check = "true"
+supports_acp = true
+acp_command = "/bin/echo"
+acp_args = ["acp"]
+`)
+
+	cfg, err := loadCityConfig(cityDir)
+	if err != nil {
+		t.Fatalf("loadCityConfig: %v", err)
+	}
+
+	resolved := resolvedWorkerRuntimeWithConfig(cityDir, cfg, session.Info{
+		Template: "opencode",
+		Command:  "/bin/echo",
+		WorkDir:  cityDir,
+	}, "provider")
+	if resolved == nil {
+		t.Fatal("resolvedWorkerRuntimeWithConfig() = nil")
+	}
+	if got, want := resolved.Command, "/bin/echo"; got != want {
+		t.Fatalf("Command = %q, want %q", got, want)
+	}
+}
+
 func TestWorkerHandleForSessionWithConfigUsesResolvedProviderOnResume(t *testing.T) {
 	skipSlowCmdGCTest(t, "waits through stale session-key detection; run make test-cmd-gc-process for full coverage")
 	cityDir := t.TempDir()

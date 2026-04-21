@@ -1297,7 +1297,7 @@ func TestResolvedSessionCommandIncludesDefaultsAndSettings(t *testing.T) {
 		EffectiveDefaults: config.ComputeEffectiveDefaults(claude.OptionsSchema, claude.OptionDefaults, nil),
 	}
 
-	got, err := resolvedSessionCommand(cityPath, resolved, nil)
+	got, err := resolvedSessionCommand(cityPath, resolved, nil, "")
 	if err != nil {
 		t.Fatalf("resolvedSessionCommand: %v", err)
 	}
@@ -1326,7 +1326,7 @@ func TestResolvedSessionCommandAppliesOverridesOverDefaults(t *testing.T) {
 	got, err := resolvedSessionCommand(cityPath, resolved, map[string]string{
 		"permission_mode": "plan",
 		"effort":          "low",
-	})
+	}, "")
 	if err != nil {
 		t.Fatalf("resolvedSessionCommand: %v", err)
 	}
@@ -1338,5 +1338,22 @@ func TestResolvedSessionCommandAppliesOverridesOverDefaults(t *testing.T) {
 	}
 	if !strings.Contains(got, "--effort low") {
 		t.Fatalf("command %q should include effort=low override", got)
+	}
+}
+
+func TestResolvedSessionCommandUsesACPTransportCommand(t *testing.T) {
+	resolved := &config.ResolvedProvider{
+		Name:       "opencode",
+		Command:    "/bin/echo",
+		ACPCommand: "/bin/echo",
+		ACPArgs:    []string{"acp"},
+	}
+
+	got, err := resolvedSessionCommand("", resolved, nil, "acp")
+	if err != nil {
+		t.Fatalf("resolvedSessionCommand: %v", err)
+	}
+	if got != "/bin/echo acp" {
+		t.Fatalf("command = %q, want %q", got, "/bin/echo acp")
 	}
 }

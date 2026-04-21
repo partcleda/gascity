@@ -2166,6 +2166,158 @@ func TestGetDoesNotPersistGuessedTransportForLegacySession(t *testing.T) {
 	}
 }
 
+func TestGetUsesConfiguredTransportForPendingCreateWithoutRuntimeProbe(t *testing.T) {
+	store := beads.NewMemStore()
+	sp := runtime.NewFake()
+
+	deferred, err := store.Create(beads.Bead{
+		Title: "deferred acp",
+		Type:  BeadType,
+		Labels: []string{
+			LabelSession,
+			"template:helper",
+		},
+		Metadata: map[string]string{
+			"template":             "helper",
+			"state":                string(StateCreating),
+			"pending_create_claim": "true",
+			"provider":             "claude",
+			"work_dir":             "/tmp",
+			"command":              "claude",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create deferred bead: %v", err)
+	}
+
+	mgr := NewManagerWithTransportResolver(store, sp, func(template string) string {
+		if template == "helper" {
+			return "acp"
+		}
+		return ""
+	})
+
+	info, err := mgr.Get(deferred.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got := info.Transport; got != "acp" {
+		t.Fatalf("Transport = %q, want acp", got)
+	}
+	if len(sp.Calls) != 0 {
+		t.Fatalf("runtime calls = %#v, want none for pending create", sp.Calls)
+	}
+}
+
+func TestGetPrefersLiveTransportDetectionOverConfiguredTransportInference(t *testing.T) {
+	store := beads.NewMemStore()
+	defaultSP := runtime.NewFake()
+	acpSP := runtime.NewFake()
+	autoSP := sessionauto.New(defaultSP, acpSP)
+
+	legacy, err := store.Create(beads.Bead{
+		Title: "legacy tmux",
+		Type:  BeadType,
+		Labels: []string{
+			LabelSession,
+			"template:helper",
+		},
+		Metadata: map[string]string{
+			"template": "helper",
+			"state":    string(StateActive),
+			"provider": "claude",
+			"work_dir": "/tmp",
+			"command":  "claude",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create legacy bead: %v", err)
+	}
+	sessName := sessionNameFor(legacy.ID)
+	if err := store.SetMetadata(legacy.ID, "session_name", sessName); err != nil {
+		t.Fatalf("SetMetadata(session_name): %v", err)
+	}
+	if err := defaultSP.Start(context.Background(), sessName, runtime.Config{WorkDir: "/tmp"}); err != nil {
+		t.Fatalf("Start default session: %v", err)
+	}
+
+	mgr := NewManagerWithTransportResolver(store, autoSP, func(template string) string {
+		if template == "helper" {
+			return "acp"
+		}
+		return ""
+	})
+
+	info, err := mgr.Get(legacy.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got := info.Transport; got != "" {
+		t.Fatalf("Transport = %q, want empty for live tmux session", got)
+	}
+
+	updated, err := store.Get(legacy.ID)
+	if err != nil {
+		t.Fatalf("Get updated bead: %v", err)
+	}
+	if got := updated.Metadata["transport"]; got != "" {
+		t.Fatalf("transport metadata = %q, want empty for live tmux session", got)
+	}
+}
+
+func TestGetDoesNotInferConfiguredTransportForStoppedLegacySession(t *testing.T) {
+	store := beads.NewMemStore()
+	defaultSP := runtime.NewFake()
+	acpSP := runtime.NewFake()
+	autoSP := sessionauto.New(defaultSP, acpSP)
+
+	legacy, err := store.Create(beads.Bead{
+		Title: "legacy tmux",
+		Type:  BeadType,
+		Labels: []string{
+			LabelSession,
+			"template:helper",
+		},
+		Metadata: map[string]string{
+			"template": "helper",
+			"state":    string(StateAsleep),
+			"provider": "claude",
+			"work_dir": "/tmp",
+			"command":  "claude",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Create legacy bead: %v", err)
+	}
+	sessName := sessionNameFor(legacy.ID)
+	if err := store.SetMetadata(legacy.ID, "session_name", sessName); err != nil {
+		t.Fatalf("SetMetadata(session_name): %v", err)
+	}
+
+	mgr := NewManagerWithTransportResolver(store, autoSP, func(template string) string {
+		if template == "helper" {
+			return "acp"
+		}
+		return ""
+	})
+
+	info, err := mgr.Get(legacy.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got := info.Transport; got != "" {
+		t.Fatalf("Transport = %q, want empty for stopped legacy tmux session", got)
+	}
+
+	updated, err := store.Get(legacy.ID)
+	if err != nil {
+		t.Fatalf("Get updated bead: %v", err)
+	}
+	if got := updated.Metadata["transport"]; got != "" {
+		t.Fatalf("transport metadata = %q, want empty for stopped legacy tmux session", got)
+	}
+}
+
 func TestSendConvergesWhenSessionAlreadyResumed(t *testing.T) {
 	store := beads.NewMemStore()
 	sp := runtime.NewFake()
