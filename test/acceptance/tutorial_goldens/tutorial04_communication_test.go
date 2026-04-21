@@ -70,7 +70,6 @@ func TestTutorial04Communication(t *testing.T) {
 			t.Fatalf("hidden gc start during tutorial 04 recovery: %v\n%s", err, out)
 		}
 		wakeMayor("wake mayor after tutorial 04 hidden restart")
-		waitForMayorReady("after tutorial 04 hidden restart")
 	}
 	if !waitForCondition(t, 30*time.Second, 1*time.Second, mayorReady) {
 		ws.noteWarning("tutorial 04 runtime workaround: gc init can leave mayor mid-restart, so the page driver explicitly wakes it before bootstrapping a fresh headless submit")
@@ -120,10 +119,11 @@ func TestTutorial04Communication(t *testing.T) {
 	})
 
 	communicationNudge := `Check mail and hook status, then act accordingly`
+	communicationFollowUp := `You already read the "Review needed" mail about auth module changes in my-project. Coordinate with the reviewer now.`
 	communicationPeekTimeout := 90 * time.Second
 	communicationRetryTimeout := 90 * time.Second
-	nudgeMayor := func(target, context string) {
-		out, err := ws.runShell(`gc session nudge `+target+` "`+communicationNudge+`"`, "")
+	nudgeMayor := func(context string) {
+		out, err := ws.runShell(`gc session nudge mayor "`+communicationNudge+`"`, "")
 		if err != nil {
 			t.Fatalf("%s: %v\n%s", context, err, out)
 		}
@@ -131,17 +131,29 @@ func TestTutorial04Communication(t *testing.T) {
 			t.Fatalf("%s output mismatch:\n%s", context, out)
 		}
 	}
-	currentMayorSessionID := func(context string) string {
+	submitMayorFollowUp := func(context string) {
 		t.Helper()
-		sessionID, err := ws.waitForSessionByTemplateOrTarget("mayor", "mayor", 30*time.Second, time.Second)
+		out, err := ws.runShell(`gc session submit mayor "`+communicationFollowUp+`"`, "")
 		if err != nil {
-			t.Fatalf("%s: %v", context, err)
+			t.Fatalf("%s: %v\n%s", context, err, out)
 		}
-		return sessionID
+		if !strings.Contains(out, "Submitted to mayor") &&
+			!strings.Contains(out, "Queued follow-up for mayor") &&
+			!strings.Contains(out, "Submitted follow-up to mayor") &&
+			!strings.Contains(out, "Interrupted and submitted to mayor") {
+			t.Fatalf("%s output mismatch:\n%s", context, out)
+		}
+	}
+	mayorMailConsumed := func() bool {
+		out, err := ws.runShell("gc mail count mayor", "")
+		if err != nil {
+			return false
+		}
+		return strings.Contains(out, "1 total") && strings.Contains(out, "0 unread")
 	}
 
 	t.Run(`gc session nudge mayor "Check mail and hook status, then act accordingly"`, func(t *testing.T) {
-		nudgeMayor("mayor", "gc session nudge mayor")
+		nudgeMayor("gc session nudge mayor")
 	})
 
 	t.Run("gc session peek mayor --lines 6", func(t *testing.T) {
@@ -160,13 +172,22 @@ func TestTutorial04Communication(t *testing.T) {
 		}
 		ok := waitForCondition(t, communicationPeekTimeout, 2*time.Second, mayorCommunicationVisible)
 		if !ok {
-			ws.noteWarning("tutorial 04 runtime workaround: the visible nudge can leave mayor with injected mail but no rendered coordination step yet, so the page driver explicitly wakes mayor and requeues the same mail-driven nudge before retrying the visible peek step")
-			wakeMayor("wake mayor before communication retry")
-			nudgeMayor(currentMayorSessionID("resolve mayor session before communication retry"), "re-nudge mayor before communication retry")
+			if mayorMailConsumed() {
+				ws.noteWarning("tutorial 04 runtime workaround: hooks already delivered and marked the mayor mail read, so the page driver submits an explicit follow-up that surfaces the already-consumed review request in peek output")
+				submitMayorFollowUp("submit follow-up after mayor consumed tutorial 04 mail")
+			} else {
+				ws.noteWarning("tutorial 04 runtime workaround: the visible nudge can leave mayor with injected mail but no rendered coordination step yet, so the page driver explicitly wakes mayor and requeues the same mail-driven nudge before retrying the visible peek step")
+				wakeMayor("wake mayor before communication retry")
+				nudgeMayor("re-nudge mayor before communication retry")
+			}
 		}
 		if !waitForCondition(t, communicationRetryTimeout, 2*time.Second, mayorCommunicationVisible) {
 			restartCity("mayor still did not surface the communication flow after wake")
-			nudgeMayor(currentMayorSessionID("resolve mayor session after hidden restart"), "re-nudge mayor after hidden restart")
+			if mayorMailConsumed() {
+				submitMayorFollowUp("submit follow-up after hidden restart")
+			} else {
+				nudgeMayor("re-nudge mayor after hidden restart")
+			}
 		}
 		if !waitForCondition(t, communicationRetryTimeout, 2*time.Second, mayorCommunicationVisible) {
 			t.Fatalf("peek mayor did not surface communication flow in time:\n%s", out)
