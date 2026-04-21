@@ -1257,6 +1257,61 @@ func TestApplyExpansionsResolvesExtendedExpansionTemplate(t *testing.T) {
 	}
 }
 
+func TestApplyInlineExpansionsDetectsConflictingParentTemplateIDs(t *testing.T) {
+	enableV2ForTest(t)
+
+	tmpDir := t.TempDir()
+
+	parentA := `{
+		"formula": "inline-parent-a",
+		"type": "expansion",
+		"version": 2,
+		"contract": "graph.v2",
+		"template": [
+			{"id": "{target}.attempt", "title": "Attempt A"}
+		]
+	}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "inline-parent-a.formula.json"), []byte(parentA), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	parentB := `{
+		"formula": "inline-parent-b",
+		"type": "expansion",
+		"version": 2,
+		"contract": "graph.v2",
+		"template": [
+			{"id": "{target}.attempt", "title": "Attempt B"}
+		]
+	}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "inline-parent-b.formula.json"), []byte(parentB), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	child := `{
+		"formula": "inline-exp-conflict",
+		"type": "expansion",
+		"version": 2,
+		"extends": ["inline-parent-a", "inline-parent-b"]
+	}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "inline-exp-conflict.formula.json"), []byte(child), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	parser := NewParser(tmpDir)
+	steps := []*Step{
+		{ID: "work", Title: "Work", Expand: "inline-exp-conflict"},
+	}
+
+	_, err := ApplyInlineExpansions(steps, parser)
+	if err == nil {
+		t.Fatal("ApplyInlineExpansions succeeded, want duplicate step ID error")
+	}
+	if !strings.Contains(err.Error(), "duplicate step IDs after inline expansion") {
+		t.Fatalf("ApplyInlineExpansions error = %v, want duplicate step ID error", err)
+	}
+}
+
 func TestFindDuplicateStepIDs(t *testing.T) {
 	tests := []struct {
 		name     string

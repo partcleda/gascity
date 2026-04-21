@@ -959,6 +959,62 @@ func TestResolve_ExpansionExtendsPreservesTemplateAndInheritedContract(t *testin
 	}
 }
 
+func TestResolve_ExpansionExtendsInheritsParentTemplateAndChildOverrides(t *testing.T) {
+	dir := t.TempDir()
+	formulaDir := filepath.Join(dir, ".beads", "formulas")
+	if err := os.MkdirAll(formulaDir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	parent := `{
+  "formula": "template-parent",
+  "version": 2,
+  "type": "expansion",
+  "contract": "graph.v2",
+  "template": [
+    {"id": "{target}.prepare", "title": "Prepare"},
+    {"id": "{target}.shared", "title": "Parent shared"}
+  ]
+}`
+	if err := os.WriteFile(filepath.Join(formulaDir, "template-parent.formula.json"), []byte(parent), 0o644); err != nil {
+		t.Fatalf("write parent: %v", err)
+	}
+
+	child := `{
+  "formula": "template-child",
+  "version": 2,
+  "type": "expansion",
+  "extends": ["template-parent"],
+  "template": [
+    {"id": "{target}.shared", "title": "Child shared"}
+  ]
+}`
+	childPath := filepath.Join(formulaDir, "template-child.formula.json")
+	if err := os.WriteFile(childPath, []byte(child), 0o644); err != nil {
+		t.Fatalf("write child: %v", err)
+	}
+
+	p := NewParser(formulaDir)
+	formula, err := p.ParseFile(childPath)
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+
+	resolved, err := p.Resolve(formula)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(resolved.Template) != 2 {
+		t.Fatalf("len(resolved.Template) = %d, want 2", len(resolved.Template))
+	}
+	if got := resolved.Template[0].ID; got != "{target}.prepare" {
+		t.Fatalf("resolved.Template[0].ID = %q, want {target}.prepare", got)
+	}
+	if got := resolved.Template[1].Title; got != "Child shared" {
+		t.Fatalf("resolved.Template[1].Title = %q, want Child shared", got)
+	}
+}
+
 func TestResolve_CircularExtends(t *testing.T) {
 	dir := t.TempDir()
 	formulaDir := filepath.Join(dir, ".beads", "formulas")

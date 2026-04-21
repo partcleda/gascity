@@ -622,5 +622,9 @@ func applyInlineExpansionsRecursive(steps []*Step, parser *Parser, depth int) ([
 		}
 	}
 
+	if dups := findDuplicateStepIDs(result); len(dups) > 0 {
+		return nil, fmt.Errorf("duplicate step IDs after inline expansion: %v", dups)
+	}
+
 	return result, nil
 }

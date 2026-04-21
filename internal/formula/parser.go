@@ -228,8 +228,9 @@ func (p *Parser) Resolve(formula *Formula) (*Formula, error) {
 		// Merge parent steps (append, child steps come after)
 		merged.Steps = append(merged.Steps, parent.Steps...)
 
-		// Expansion formulas inherit template steps through extends.
-		merged.Template = mergeSteps(merged.Template, parent.Template)
+		// Parent templates append in declaration order. Only the child gets
+		// override semantics so parent-parent conflicts still surface later.
+		merged.Template = append(merged.Template, parent.Template...)
 
 		// Merge parent compose rules
 		merged.Compose = mergeComposeRules(merged.Compose, parent.Compose)
