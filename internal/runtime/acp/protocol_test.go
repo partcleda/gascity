@@ -325,6 +325,14 @@ func TestSessionNewRequest_SerializesMCPServersByTransport(t *testing.T) {
 				"Authorization": "Bearer token",
 			},
 		},
+		{
+			Name:      "stream",
+			Transport: runtime.MCPTransportSSE,
+			URL:       "https://mcp.example.test/sse",
+			Headers: map[string]string{
+				"X-Test": "1",
+			},
+		},
 	})
 	data, err := json.Marshal(msg)
 	if err != nil {
@@ -343,8 +351,8 @@ func TestSessionNewRequest_SerializesMCPServersByTransport(t *testing.T) {
 	if err := json.Unmarshal(decoded.Params, &params); err != nil {
 		t.Fatalf("Unmarshal params: %v", err)
 	}
-	if len(params.McpServers) != 2 {
-		t.Fatalf("mcpServers len = %d, want 2", len(params.McpServers))
+	if len(params.McpServers) != 3 {
+		t.Fatalf("mcpServers len = %d, want 3", len(params.McpServers))
 	}
 
 	var stdio struct {
@@ -384,6 +392,25 @@ func TestSessionNewRequest_SerializesMCPServersByTransport(t *testing.T) {
 	}
 	if len(http.Headers) != 1 || http.Headers[0].Name != "Authorization" {
 		t.Fatalf("http headers = %#v, want Authorization", http.Headers)
+	}
+
+	var sse struct {
+		Type    string                `json:"type"`
+		Name    string                `json:"name"`
+		URL     string                `json:"url"`
+		Headers []runtime.MCPKeyValue `json:"headers"`
+	}
+	if err := json.Unmarshal(params.McpServers[2], &sse); err != nil {
+		t.Fatalf("Unmarshal sse server: %v", err)
+	}
+	if sse.Type != "sse" {
+		t.Fatalf("sse type = %q, want sse", sse.Type)
+	}
+	if sse.URL != "https://mcp.example.test/sse" {
+		t.Fatalf("sse url = %q, want https://mcp.example.test/sse", sse.URL)
+	}
+	if len(sse.Headers) != 1 || sse.Headers[0].Name != "X-Test" {
+		t.Fatalf("sse headers = %#v, want X-Test", sse.Headers)
 	}
 }
 

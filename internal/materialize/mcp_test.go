@@ -9,6 +9,7 @@ import (
 
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/fsys"
+	"github.com/gastownhall/gascity/internal/runtime"
 )
 
 func TestMCPIdentityForFilename(t *testing.T) {
@@ -193,6 +194,24 @@ func TestNormalizeMCPServerStableMapOrder(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("NormalizeMCPServer()=%#v, want %#v", got, want)
+	}
+}
+
+func TestRuntimeMCPServersPreservesTransport(t *testing.T) {
+	t.Parallel()
+
+	got := RuntimeMCPServers([]MCPServer{
+		{Name: "stdio", Transport: MCPTransportStdio, Command: "uvx"},
+		{Name: "http", Transport: MCPTransportHTTP, URL: "https://example.test/http"},
+		{Name: "sse", Transport: MCPTransportSSE, URL: "https://example.test/sse"},
+	})
+	want := []runtime.MCPServerConfig{
+		{Name: "http", Transport: runtime.MCPTransportHTTP, URL: "https://example.test/http"},
+		{Name: "sse", Transport: runtime.MCPTransportSSE, URL: "https://example.test/sse"},
+		{Name: "stdio", Transport: runtime.MCPTransportStdio, Command: "uvx"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("RuntimeMCPServers()=%#v, want %#v", got, want)
 	}
 }
 

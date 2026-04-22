@@ -424,16 +424,26 @@ func validateResolvedSessionTransport(resolved *config.ResolvedProvider, transpo
 			return fmt.Errorf("provider %q does not support ACP transport", providerName)
 		}
 	}
-	if provider, ok := sp.(runtime.TransportCapabilityProvider); ok && provider.SupportsTransport("acp") {
-		return nil
-	}
-	if _, ok := sp.(acpRouteRegistrar); ok {
+	if sessionProviderSupportsACP(sp) {
 		return nil
 	}
 	if providerName == "" {
 		providerName = transport
 	}
 	return fmt.Errorf("provider %q requires ACP transport but the session provider cannot route ACP sessions", providerName)
+}
+
+func sessionProviderSupportsACP(sp runtime.Provider) bool {
+	if sp == nil {
+		return false
+	}
+	if provider, ok := sp.(runtime.TransportCapabilityProvider); ok {
+		return provider.SupportsTransport("acp")
+	}
+	if _, ok := sp.(acpRouteRegistrar); ok {
+		return true
+	}
+	return false
 }
 
 func resolvedSessionCommand(cityPath string, resolved *config.ResolvedProvider, optionOverrides map[string]string, transport string) (string, error) {

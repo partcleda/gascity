@@ -97,6 +97,8 @@ func RuntimeMCPServers(servers []MCPServer) []runtime.MCPServerConfig {
 		switch server.Transport {
 		case MCPTransportHTTP:
 			entry.Transport = runtime.MCPTransportHTTP
+		case MCPTransportSSE:
+			entry.Transport = runtime.MCPTransportSSE
 		default:
 			entry.Transport = runtime.MCPTransportStdio
 		}

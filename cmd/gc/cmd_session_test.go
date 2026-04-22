@@ -61,6 +61,16 @@ func (p *transportCapableSessionProvider) SupportsTransport(transport string) bo
 	return transport == "acp"
 }
 
+type routedRejectingSessionProvider struct {
+	*runtime.Fake
+}
+
+func (p *routedRejectingSessionProvider) SupportsTransport(string) bool {
+	return false
+}
+
+func (p *routedRejectingSessionProvider) RouteACP(string) {}
+
 func TestFormatDuration(t *testing.T) {
 	tests := []struct {
 		d    time.Duration
@@ -1391,5 +1401,15 @@ func TestValidateResolvedSessionTransportAcceptsRoutedACPProvider(t *testing.T) 
 		SupportsACP: true,
 	}, "acp", &transportCapableSessionProvider{Fake: runtime.NewFake()}); err != nil {
 		t.Fatalf("validateResolvedSessionTransport() = %v, want nil", err)
+	}
+}
+
+func TestValidateResolvedSessionTransportRejectsRoutedProviderWhenTransportCapabilityDisablesACP(t *testing.T) {
+	err := validateResolvedSessionTransport(&config.ResolvedProvider{
+		Name:        "opencode",
+		SupportsACP: true,
+	}, "acp", &routedRejectingSessionProvider{Fake: runtime.NewFake()})
+	if err == nil || !strings.Contains(err.Error(), "requires ACP transport") {
+		t.Fatalf("validateResolvedSessionTransport() error = %v, want ACP routing error", err)
 	}
 }
