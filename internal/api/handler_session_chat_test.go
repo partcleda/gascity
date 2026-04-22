@@ -246,7 +246,7 @@ func TestBuildSessionResumeFallsBackToStoredCommandWhenTemplateOverridesInvalid(
 	}
 }
 
-func TestBuildSessionResumeUsesStoredACPCommandForLegacyProviderSessionWithoutTransportMetadataWithoutSessionAutoProvider(t *testing.T) {
+func TestBuildSessionResumeUsesConfiguredACPCommandForLegacyProviderSessionWithoutTransportMetadataWithoutSessionAutoProvider(t *testing.T) {
 	supportsACP := true
 	fs := newSessionFakeState(t)
 	fs.cfg = &config.City{
@@ -267,7 +267,7 @@ func TestBuildSessionResumeUsesStoredACPCommandForLegacyProviderSessionWithoutTr
 	info := session.Info{
 		ID:       "gc-1",
 		Template: "opencode",
-		Command:  "/bin/echo acp",
+		Command:  "/bin/echo",
 		Provider: "opencode",
 		WorkDir:  "/tmp/workdir",
 	}
@@ -281,7 +281,7 @@ func TestBuildSessionResumeUsesStoredACPCommandForLegacyProviderSessionWithoutTr
 	}
 }
 
-func TestBuildSessionResumeUsesStoredACPCommandForLegacyProviderSessionWithoutTransportMetadata(t *testing.T) {
+func TestBuildSessionResumeUsesConfiguredACPCommandForLegacyProviderSessionWithoutTransportMetadata(t *testing.T) {
 	supportsACP := true
 	fs := newSessionFakeState(t)
 	fs.cfg = &config.City{
@@ -306,7 +306,7 @@ func TestBuildSessionResumeUsesStoredACPCommandForLegacyProviderSessionWithoutTr
 	info := session.Info{
 		ID:       "gc-1",
 		Template: "opencode",
-		Command:  "/bin/echo acp",
+		Command:  "/bin/echo",
 		Provider: "opencode",
 		WorkDir:  "/tmp/workdir",
 	}
@@ -320,7 +320,7 @@ func TestBuildSessionResumeUsesStoredACPCommandForLegacyProviderSessionWithoutTr
 	}
 }
 
-func TestBuildSessionResumeUsesStoredACPCommandForLegacyProviderSessionOnACPEnabledCustomProvider(t *testing.T) {
+func TestBuildSessionResumeUsesACPCommandForLegacyProviderSessionOnACPEnabledCustomProvider(t *testing.T) {
 	supportsACP := true
 	fs := newSessionFakeState(t)
 	fs.cfg = &config.City{
@@ -341,7 +341,7 @@ func TestBuildSessionResumeUsesStoredACPCommandForLegacyProviderSessionOnACPEnab
 	info := session.Info{
 		ID:       "gc-1",
 		Template: "custom-acp",
-		Command:  "/bin/echo acp",
+		Command:  "/bin/echo",
 		Provider: "custom-acp",
 		WorkDir:  "/tmp/workdir",
 	}
@@ -383,6 +383,44 @@ func TestBuildSessionResumeUsesStoredACPTransportForTemplateSession(t *testing.T
 		Provider:  "opencode",
 		Transport: "acp",
 		WorkDir:   "/tmp/workdir",
+	}
+
+	cmd, _, err := srv.buildSessionResume(info)
+	if err != nil {
+		t.Fatalf("buildSessionResume: %v", err)
+	}
+	if got, want := cmd, "/bin/echo acp"; got != want {
+		t.Fatalf("resume command = %q, want %q", got, want)
+	}
+}
+
+func TestBuildSessionResumeUsesConfiguredACPTransportForTemplateSessionWithoutStoredMetadata(t *testing.T) {
+	supportsACP := true
+	fs := newSessionFakeState(t)
+	fs.cfg = &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Agents: []config.Agent{
+			{Name: "worker", Provider: "opencode", Session: "acp"},
+		},
+		Providers: map[string]config.ProviderSpec{
+			"opencode": {
+				DisplayName: "OpenCode",
+				Command:     "/bin/echo",
+				PathCheck:   "true",
+				SupportsACP: &supportsACP,
+				ACPCommand:  "/bin/echo",
+				ACPArgs:     []string{"acp"},
+			},
+		},
+	}
+
+	srv := New(fs)
+	info := session.Info{
+		ID:       "gc-1",
+		Template: "worker",
+		Command:  "/bin/echo",
+		Provider: "opencode",
+		WorkDir:  "/tmp/workdir",
 	}
 
 	cmd, _, err := srv.buildSessionResume(info)

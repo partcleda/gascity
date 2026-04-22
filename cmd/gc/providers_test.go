@@ -349,7 +349,6 @@ func TestConfiguredACPRouteNames_IncludeLegacyObservedACPProviderSessionsWithout
 		Metadata: map[string]string{
 			"template":     "opencode",
 			"provider":     "opencode",
-			"command":      "/bin/echo acp",
 			"session_name": "provider-session",
 		},
 	}})
@@ -379,7 +378,6 @@ func TestConfiguredACPRouteNames_IncludeLegacyObservedCustomACPProviderSessionsW
 		Metadata: map[string]string{
 			"template":     "custom-acp",
 			"provider":     "custom-acp",
-			"command":      "/bin/echo acp",
 			"session_name": "provider-session",
 		},
 	}})
@@ -624,7 +622,6 @@ func TestNewSessionProviderRoutesLegacyObservedACPProviderSessionsWithoutTranspo
 		Metadata: map[string]string{
 			"template":     "opencode",
 			"provider":     "opencode",
-			"command":      "/bin/echo acp",
 			"session_name": "provider-session",
 		},
 	}); err != nil {

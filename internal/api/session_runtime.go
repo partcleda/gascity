@@ -373,7 +373,7 @@ func storedSessionProvesACPTransport(resolved *config.ResolvedProvider, storedCo
 	return shouldPreserveStoredRuntimeCommand(storedCommand, acpCommand)
 }
 
-func resolvedSessionTransport(info session.Info, resolved *config.ResolvedProvider, configuredTransport string, metadata map[string]string) string {
+func resolvedSessionTransport(info session.Info, resolved *config.ResolvedProvider, configuredTransport string, metadata map[string]string, allowConfiguredTransportFallback bool) string {
 	if transport := strings.TrimSpace(info.Transport); transport != "" {
 		return transport
 	}
@@ -383,7 +383,7 @@ func resolvedSessionTransport(info session.Info, resolved *config.ResolvedProvid
 	if storedSessionProvesACPTransport(resolved, info.Command, metadata) {
 		return "acp"
 	}
-	if strings.TrimSpace(info.Command) == "" {
+	if allowConfiguredTransportFallback || strings.TrimSpace(info.Command) == "" {
 		return strings.TrimSpace(configuredTransport)
 	}
 	return ""
@@ -391,13 +391,20 @@ func resolvedSessionTransport(info session.Info, resolved *config.ResolvedProvid
 
 func (s *Server) resolveSessionRuntimeWithMetadata(info session.Info, metadata map[string]string) (*config.ResolvedProvider, string, string) {
 	kind := s.sessionKind(info.ID)
-	if kind != "provider" {
-		resolved, workDir, transport, _, err := s.resolveSessionTemplate(info.Template)
-		if err == nil {
-			if info.WorkDir != "" {
-				workDir = info.WorkDir
+	cfg := s.state.Config()
+	if kind != "provider" && cfg != nil {
+		if agentCfg, ok := resolveSessionTemplateAgent(cfg, info.Template); ok {
+			resolved, err := config.ResolveProvider(&agentCfg, &cfg.Workspace, cfg.Providers, exec.LookPath)
+			if err == nil {
+				workDir, workDirErr := s.resolveSessionWorkDir(agentCfg, agentCfg.QualifiedName())
+				if workDirErr == nil {
+					if info.WorkDir != "" {
+						workDir = info.WorkDir
+					}
+					transport := config.ResolveSessionCreateTransport(agentCfg.Session, resolved)
+					return resolved, workDir, resolvedSessionTransport(info, resolved, transport, metadata, strings.TrimSpace(agentCfg.Session) != "")
+				}
 			}
-			return resolved, workDir, resolvedSessionTransport(info, resolved, transport, metadata)
 		}
 	}
 
@@ -409,7 +416,7 @@ func (s *Server) resolveSessionRuntimeWithMetadata(info session.Info, metadata m
 	if workDir == "" {
 		workDir = s.state.CityPath()
 	}
-	transport := resolvedSessionTransport(info, resolved, resolved.ProviderSessionCreateTransport(), metadata)
+	transport := resolvedSessionTransport(info, resolved, resolved.ProviderSessionCreateTransport(), metadata, true)
 	return resolved, workDir, transport
 }
 
