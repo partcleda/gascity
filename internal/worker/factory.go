@@ -23,7 +23,7 @@ type FactoryConfig struct {
 	CityPath              string
 	SearchPaths           []string
 	Recorder              events.Recorder
-	ResolveTransport      func(template string) string
+	ResolveTransport      func(template, provider string) string
 	ResolveSessionRuntime SessionRuntimeResolver
 }
 
@@ -48,9 +48,7 @@ func NewFactory(cfg FactoryConfig) (*Factory, error) {
 			cfg.Store,
 			cfg.Provider,
 			cfg.CityPath,
-			func(template, provider string) string {
-				return cfg.ResolveTransport(template)
-			},
+			cfg.ResolveTransport,
 		)
 	case cfg.CityPath != "":
 		manager = sessionpkg.NewManagerWithCityPath(cfg.Store, cfg.Provider, cfg.CityPath)

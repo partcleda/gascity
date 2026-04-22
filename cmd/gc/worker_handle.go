@@ -25,17 +25,33 @@ func workerSessionCatalogWithConfig(cityPath string, store beads.Store, sp runti
 
 func workerFactoryWithConfig(cityPath string, store beads.Store, sp runtime.Provider, cfg *config.City) (*worker.Factory, error) {
 	var (
-		resolveTransport func(template string) string
+		resolveTransport func(template, provider string) string
 		searchPaths      []string
 	)
 	if cfg != nil {
 		rigContext := currentRigContext(cfg)
-		resolveTransport = func(template string) string {
+		resolveTransport = func(template, provider string) string {
 			agentCfg, ok := resolveAgentIdentity(cfg, template, rigContext)
-			if !ok {
+			if ok {
+				return agentCfg.Session
+			}
+			provider = strings.TrimSpace(provider)
+			if provider == "" {
+				provider = strings.TrimSpace(template)
+			}
+			if provider == "" {
 				return ""
 			}
-			return agentCfg.Session
+			resolved, err := config.ResolveProvider(
+				&config.Agent{Provider: provider},
+				&cfg.Workspace,
+				cfg.Providers,
+				func(name string) (string, error) { return name, nil },
+			)
+			if err != nil {
+				return ""
+			}
+			return strings.TrimSpace(resolved.DefaultSessionTransport())
 		}
 		searchPaths = worker.MergeSearchPaths(cfg.Daemon.ObservePaths)
 	}
