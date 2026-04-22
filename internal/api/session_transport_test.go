@@ -41,3 +41,65 @@ func TestProviderSessionTransportSupportsACPAloneStaysDefault(t *testing.T) {
 		t.Fatalf("providerSessionTransport() = %q, want empty transport", transport)
 	}
 }
+
+func TestResolveSessionTemplateForCreateUsesProviderACPDefault(t *testing.T) {
+	fs := newSessionFakeState(t)
+	supportsACP := true
+	fs.cfg = &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Agents: []config.Agent{{
+			Name:     "worker",
+			Dir:      "myrig",
+			Provider: "custom-acp",
+		}},
+		Providers: map[string]config.ProviderSpec{
+			"custom-acp": {
+				Command:     "/bin/echo",
+				PathCheck:   "true",
+				SupportsACP: &supportsACP,
+				ACPCommand:  "/bin/echo",
+				ACPArgs:     []string{"acp"},
+			},
+		},
+	}
+
+	srv := New(fs)
+	_, _, transport, _, err := srv.resolveSessionTemplateForCreate("myrig/worker")
+	if err != nil {
+		t.Fatalf("resolveSessionTemplateForCreate: %v", err)
+	}
+	if transport != "acp" {
+		t.Fatalf("transport = %q, want %q", transport, "acp")
+	}
+}
+
+func TestResolveSessionTemplateKeepsLegacyRuntimeTransportDefault(t *testing.T) {
+	fs := newSessionFakeState(t)
+	supportsACP := true
+	fs.cfg = &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Agents: []config.Agent{{
+			Name:     "worker",
+			Dir:      "myrig",
+			Provider: "custom-acp",
+		}},
+		Providers: map[string]config.ProviderSpec{
+			"custom-acp": {
+				Command:     "/bin/echo",
+				PathCheck:   "true",
+				SupportsACP: &supportsACP,
+				ACPCommand:  "/bin/echo",
+				ACPArgs:     []string{"acp"},
+			},
+		},
+	}
+
+	srv := New(fs)
+	_, _, transport, _, err := srv.resolveSessionTemplate("myrig/worker")
+	if err != nil {
+		t.Fatalf("resolveSessionTemplate: %v", err)
+	}
+	if transport != "" {
+		t.Fatalf("transport = %q, want empty runtime default", transport)
+	}
+}

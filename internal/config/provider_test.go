@@ -446,3 +446,24 @@ func TestProviderSessionCreateTransportSupportsACPAloneStaysDefault(t *testing.T
 		t.Fatalf("ProviderSessionCreateTransport() = %q, want empty transport", got)
 	}
 }
+
+func TestResolveSessionCreateTransportPrefersAgentSessionOverride(t *testing.T) {
+	got := ResolveSessionCreateTransport("acp", &ResolvedProvider{
+		Name:        "custom-acp",
+		SupportsACP: true,
+	})
+	if got != "acp" {
+		t.Fatalf("ResolveSessionCreateTransport() = %q, want %q", got, "acp")
+	}
+}
+
+func TestResolveSessionCreateTransportFallsBackToProviderCreateTransport(t *testing.T) {
+	got := ResolveSessionCreateTransport("", &ResolvedProvider{
+		Name:        "custom-acp",
+		SupportsACP: true,
+		ACPCommand:  "/bin/echo",
+	})
+	if got != "acp" {
+		t.Fatalf("ResolveSessionCreateTransport() = %q, want %q", got, "acp")
+	}
+}

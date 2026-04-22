@@ -130,8 +130,9 @@ func resolveTemplate(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName 
 	if err != nil {
 		return TemplateParams{}, fmt.Errorf("agent %q: %w", qualifiedName, err)
 	}
+	sessionTransport := config.ResolveSessionCreateTransport(cfgAgent.Session, resolved)
 	// Step 2: Validate session vs provider compatibility.
-	if cfgAgent.Session == "acp" && !resolved.SupportsACP {
+	if sessionTransport == "acp" && !resolved.SupportsACP {
 		return TemplateParams{}, fmt.Errorf("agent %q: session = \"acp\" but provider %q does not support ACP (set supports_acp = true on the provider)", qualifiedName, resolved.Name)
 	}
 
@@ -151,7 +152,7 @@ func resolveTemplate(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName 
 	// Step 5: Build copy_files and command with settings args + schema defaults.
 	var copyFiles []runtime.CopyEntry
 	var command string
-	if cfgAgent.Session == "acp" {
+	if sessionTransport == "acp" {
 		command = resolved.ACPCommandString()
 	} else {
 		command = resolved.CommandString()
@@ -477,7 +478,7 @@ func resolveTemplate(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName 
 		}
 	}
 	var mcpServers []runtime.MCPServerConfig
-	if cfgAgent.Session == "acp" {
+	if sessionTransport == "acp" {
 		mcpServers = materialize.RuntimeMCPServers(mcpCatalog.Servers)
 	}
 
@@ -514,7 +515,7 @@ func resolveTemplate(p *agentBuildParams, cfgAgent *config.Agent, qualifiedName 
 		RigName:          rigName,
 		RigRoot:          rigRoot,
 		WakeMode:         cfgAgent.WakeMode,
-		IsACP:            cfgAgent.Session == "acp",
+		IsACP:            sessionTransport == "acp",
 		HookEnabled:      hasHooks,
 		MCPServers:       mcpServers,
 	}, nil

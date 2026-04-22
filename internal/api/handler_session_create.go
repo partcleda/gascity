@@ -77,7 +77,7 @@ func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 	switch kind {
 	case "agent":
 		var err error
-		resolved, workDir, transport, template, err = s.resolveSessionTemplate(name)
+		resolved, workDir, transport, template, err = s.resolveSessionTemplateForCreate(name)
 		if err != nil {
 			if errors.Is(err, errSessionTemplateNotFound) {
 				s.idem.unreserve(idemKey)

@@ -166,7 +166,7 @@ func (s *Server) resolveSessionWorkDir(agentCfg config.Agent, qualifiedName stri
 // agent name that matches exactly one configured agent. Keeps the
 // two-phase lookup out of the handler.
 func (s *Server) resolveSessionTemplateWithBareNameFallback(name string) (*config.ResolvedProvider, string, string, string, error) {
-	resolved, workDir, transport, template, err := s.resolveSessionTemplate(name)
+	resolved, workDir, transport, template, err := s.resolveSessionTemplateForCreate(name)
 	if err == nil {
 		return resolved, workDir, transport, template, nil
 	}
@@ -177,7 +177,27 @@ func (s *Server) resolveSessionTemplateWithBareNameFallback(name string) (*confi
 	if !ok {
 		return nil, "", "", "", err
 	}
-	return s.resolveSessionTemplate(agentCfg.QualifiedName())
+	return s.resolveSessionTemplateForCreate(agentCfg.QualifiedName())
+}
+
+func (s *Server) resolveSessionTemplateForCreate(template string) (*config.ResolvedProvider, string, string, string, error) {
+	cfg := s.state.Config()
+	if cfg == nil {
+		return nil, "", "", "", errors.New("no city config loaded")
+	}
+	agentCfg, ok := resolveSessionTemplateAgent(cfg, template)
+	if !ok {
+		return nil, "", "", "", errSessionTemplateNotFound
+	}
+	resolved, err := config.ResolveProvider(&agentCfg, &cfg.Workspace, cfg.Providers, exec.LookPath)
+	if err != nil {
+		return nil, "", "", "", err
+	}
+	workDir, err := s.resolveSessionWorkDir(agentCfg, agentCfg.QualifiedName())
+	if err != nil {
+		return nil, "", "", "", err
+	}
+	return resolved, workDir, config.ResolveSessionCreateTransport(agentCfg.Session, resolved), agentCfg.QualifiedName(), nil
 }
 
 func (s *Server) resolveSessionTemplate(template string) (*config.ResolvedProvider, string, string, string, error) {

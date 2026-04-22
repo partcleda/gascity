@@ -119,11 +119,12 @@ func materializeSessionForTemplateWithOptions(
 		if err != nil {
 			return "", err
 		}
+		sessionTransport := config.ResolveSessionCreateTransport(spec.Agent.Session, resolved)
 		sp := newSessionProvider()
-		if err := validateResolvedSessionTransport(resolved, spec.Agent.Session, sp); err != nil {
+		if err := validateResolvedSessionTransport(resolved, sessionTransport, sp); err != nil {
 			return "", err
 		}
-		sessionCommand, err := resolvedSessionCommand(cityPath, resolved, nil, spec.Agent.Session)
+		sessionCommand, err := resolvedSessionCommand(cityPath, resolved, nil, sessionTransport)
 		if err != nil {
 			return "", err
 		}
@@ -172,7 +173,7 @@ func materializeSessionForTemplateWithOptions(
 			sessionCommand,
 			providerName,
 			workDir,
-			spec.Agent.Session,
+			sessionTransport,
 			resolved,
 			extraMeta,
 		)
@@ -275,11 +276,12 @@ func materializeSessionForAgentConfig(cityPath string, cfg *config.City, store b
 	if err != nil {
 		return "", err
 	}
+	sessionTransport := config.ResolveSessionCreateTransport(agentCfg.Session, resolved)
 	sp := newSessionProvider()
-	if err := validateResolvedSessionTransport(resolved, agentCfg.Session, sp); err != nil {
+	if err := validateResolvedSessionTransport(resolved, sessionTransport, sp); err != nil {
 		return "", err
 	}
-	sessionCommand, err := resolvedSessionCommand(cityPath, resolved, nil, agentCfg.Session)
+	sessionCommand, err := resolvedSessionCommand(cityPath, resolved, nil, sessionTransport)
 	if err != nil {
 		return "", err
 	}
@@ -321,7 +323,7 @@ func materializeSessionForAgentConfig(cityPath string, cfg *config.City, store b
 		sessionCommand,
 		agentCfg.Provider,
 		workDir,
-		agentCfg.Session,
+		sessionTransport,
 		resolved,
 		extraMeta,
 	)

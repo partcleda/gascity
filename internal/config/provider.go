@@ -264,6 +264,19 @@ func (rp *ResolvedProvider) ProviderSessionCreateTransport() string {
 	return ""
 }
 
+// ResolveSessionCreateTransport returns the transport to use when creating a
+// fresh session from an agent/template configuration.
+func ResolveSessionCreateTransport(agentSession string, resolved *ResolvedProvider) string {
+	agentSession = strings.TrimSpace(agentSession)
+	if agentSession != "" {
+		return agentSession
+	}
+	if resolved == nil {
+		return ""
+	}
+	return strings.TrimSpace(resolved.ProviderSessionCreateTransport())
+}
+
 // TitleModelFlagArgs resolves the TitleModel key against the "model"
 // OptionsSchema entry. Returns the CLI flag args for the title model,
 // or nil if TitleModel is empty or not found in the schema.

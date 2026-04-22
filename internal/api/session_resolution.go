@@ -275,7 +275,7 @@ func (s *Server) materializeNamedSessionWithContext(ctx context.Context, store b
 		return "", err
 	}
 
-	resolved, _, transport, qualifiedTemplate, err := s.resolveSessionTemplate(spec.Agent.QualifiedName())
+	resolved, _, transport, qualifiedTemplate, err := s.resolveSessionTemplateForCreate(spec.Agent.QualifiedName())
 	if err != nil {
 		return "", err
 	}

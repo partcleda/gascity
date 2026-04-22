@@ -170,6 +170,7 @@ func cmdSessionNew(args []string, alias, title, titleHint string, noAttach bool,
 		fmt.Fprintf(stderr, "gc session new: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
+	sessionTransport := config.ResolveSessionCreateTransport(found.Session, resolved)
 	requestedAlias, err := session.ValidateAlias(alias)
 	if err != nil {
 		fmt.Fprintf(stderr, "gc session new: %v\n", err) //nolint:errcheck // best-effort stderr
@@ -192,7 +193,7 @@ func cmdSessionNew(args []string, alias, title, titleHint string, noAttach bool,
 	}
 
 	sp := newSessionProvider()
-	if err := validateResolvedSessionTransport(resolved, found.Session, sp); err != nil {
+	if err := validateResolvedSessionTransport(resolved, sessionTransport, sp); err != nil {
 		fmt.Fprintf(stderr, "gc session new: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
@@ -227,7 +228,7 @@ func cmdSessionNew(args []string, alias, title, titleHint string, noAttach bool,
 	if err != nil {
 		titleProvider = nil
 	}
-	sessionCommand, err := resolvedSessionCommand(cityPath, resolved, nil, found.Session)
+	sessionCommand, err := resolvedSessionCommand(cityPath, resolved, nil, sessionTransport)
 	if err != nil {
 		fmt.Fprintf(stderr, "gc session new: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
@@ -256,7 +257,7 @@ func cmdSessionNew(args []string, alias, title, titleHint string, noAttach bool,
 				canonicalTemplate,
 				resolved.Name,
 				workDir,
-				found.Session,
+				sessionTransport,
 				kindMeta,
 			)
 			if err != nil {
@@ -275,7 +276,7 @@ func cmdSessionNew(args []string, alias, title, titleHint string, noAttach bool,
 				sessionCommand,
 				found.Provider,
 				workDir,
-				found.Session,
+				sessionTransport,
 				resolved,
 				kindMeta,
 			)
@@ -313,8 +314,8 @@ func cmdSessionNew(args []string, alias, title, titleHint string, noAttach bool,
 
 			fmt.Fprintf(stdout, "Session %s created from template %q (reconciler will start it).\n", info.ID, canonicalTemplate) //nolint:errcheck // best-effort stdout
 
-			if !shouldAttachNewSession(noAttach, found.Session) {
-				if found.Session == "acp" && !noAttach {
+			if !shouldAttachNewSession(noAttach, sessionTransport) {
+				if sessionTransport == "acp" && !noAttach {
 					fmt.Fprintln(stdout, "Session uses ACP transport; not attaching.") //nolint:errcheck // best-effort stdout
 				}
 				return 0
@@ -353,7 +354,7 @@ func cmdSessionNew(args []string, alias, title, titleHint string, noAttach bool,
 		canonicalTemplate,
 		resolved.Name,
 		workDir,
-		found.Session,
+		sessionTransport,
 		kindMeta,
 	)
 	if err != nil {
@@ -372,7 +373,7 @@ func cmdSessionNew(args []string, alias, title, titleHint string, noAttach bool,
 		sessionCommand,
 		found.Provider,
 		workDir,
-		found.Session,
+		sessionTransport,
 		resolved,
 		kindMeta,
 	)
@@ -407,8 +408,8 @@ func cmdSessionNew(args []string, alias, title, titleHint string, noAttach bool,
 
 	fmt.Fprintf(stdout, "Session %s created from template %q.\n", info.ID, canonicalTemplate) //nolint:errcheck // best-effort stdout
 
-	if !shouldAttachNewSession(noAttach, found.Session) {
-		if found.Session == "acp" && !noAttach {
+	if !shouldAttachNewSession(noAttach, sessionTransport) {
+		if sessionTransport == "acp" && !noAttach {
 			fmt.Fprintln(stdout, "Session uses ACP transport; not attaching.") //nolint:errcheck // best-effort stdout
 		}
 		return 0

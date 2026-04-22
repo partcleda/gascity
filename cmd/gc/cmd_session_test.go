@@ -497,6 +497,42 @@ args = ["{{.AgentName}}", "{{.WorkDir}}", "{{.TemplateName}}"]
 	}
 }
 
+func TestCmdSessionNew_CustomACPProviderDefaultsAgentSessionToACP(t *testing.T) {
+	t.Setenv("GC_BEADS", "file")
+	t.Setenv("GC_SESSION", "fake")
+
+	oldBuild := buildSessionProviderByName
+	t.Cleanup(func() { buildSessionProviderByName = oldBuild })
+	buildSessionProviderByName = func(name string, sc config.SessionConfig, cityName, cityPath string) (runtime.Provider, error) {
+		if name == "acp" {
+			return &transportCapableSessionProvider{Fake: runtime.NewFake()}, nil
+		}
+		return oldBuild(name, sc, cityName, cityPath)
+	}
+
+	cityDir := t.TempDir()
+	t.Setenv("GC_CITY", cityDir)
+	writePoolProviderDefaultACPSessionCityTOML(t, cityDir)
+	writeCatalogFile(t, cityDir, "mcp/identity.template.toml", `
+name = "identity"
+command = "/bin/mcp"
+args = ["{{.AgentName}}", "{{.WorkDir}}", "{{.TemplateName}}"]
+`)
+
+	var stdout, stderr bytes.Buffer
+	if code := cmdSessionNew([]string{"demo/ant"}, "", "", "", true, &stdout, &stderr); code != 0 {
+		t.Fatalf("cmdSessionNew(custom provider acp default) = %d, want 0; stderr=%s", code, stderr.String())
+	}
+
+	bead := onlySessionBead(t, cityDir)
+	if got := bead.Metadata["transport"]; got != "acp" {
+		t.Fatalf("transport = %q, want %q", got, "acp")
+	}
+	if got := bead.Metadata[session.MCPServersSnapshotMetadataKey]; got == "" {
+		t.Fatal("mcp_servers_snapshot metadata = empty, want persisted snapshot")
+	}
+}
+
 func TestCmdSessionNew_PoolTemplateRejectsAliasMatchingConcreteIdentity(t *testing.T) {
 	t.Setenv("GC_BEADS", "file")
 	t.Setenv("GC_SESSION", "fake")
@@ -1275,6 +1311,45 @@ min_active_sessions = 0
 max_active_sessions = 4
 
 [providers.stub]
+command = "/bin/echo"
+path_check = "true"
+supports_acp = true
+acp_command = "/bin/echo"
+acp_args = ["acp"]
+`, rigRoot))
+	if err := os.WriteFile(filepath.Join(dir, "city.toml"), data, 0o644); err != nil {
+		t.Fatalf("WriteFile(city.toml): %v", err)
+	}
+}
+
+func writePoolProviderDefaultACPSessionCityTOML(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, ".gc"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(.gc): %v", err)
+	}
+	rigRoot := filepath.Join(dir, "repos", "demo")
+	if err := os.MkdirAll(rigRoot, 0o755); err != nil {
+		t.Fatalf("MkdirAll(rig root): %v", err)
+	}
+	data := []byte(fmt.Sprintf(`[workspace]
+name = "test-city"
+
+[beads]
+provider = "file"
+
+[[rigs]]
+name = "demo"
+path = %q
+
+[[agent]]
+name = "ant"
+dir = "demo"
+provider = "custom-acp"
+work_dir = ".gc/worktrees/{{.Rig}}/ants/{{.AgentBase}}"
+min_active_sessions = 0
+max_active_sessions = 4
+
+[providers.custom-acp]
 command = "/bin/echo"
 path_check = "true"
 supports_acp = true
