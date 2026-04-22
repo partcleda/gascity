@@ -373,6 +373,44 @@ func TestBuildSessionResumeUsesConfiguredACPCommandForLegacyTemplateSessionWitho
 	}
 }
 
+func TestBuildSessionResumeKeepsDefaultCommandForLegacyTemplateWithoutExplicitACPTransport(t *testing.T) {
+	supportsACP := true
+	fs := newSessionFakeState(t)
+	fs.cfg = &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Agents: []config.Agent{
+			{Name: "worker", Provider: "opencode"},
+		},
+		Providers: map[string]config.ProviderSpec{
+			"opencode": {
+				DisplayName: "OpenCode",
+				Command:     "/bin/echo",
+				PathCheck:   "true",
+				SupportsACP: &supportsACP,
+				ACPCommand:  "/bin/echo",
+				ACPArgs:     []string{"acp"},
+			},
+		},
+	}
+
+	srv := New(fs)
+	info := session.Info{
+		ID:       "gc-1",
+		Template: "worker",
+		Command:  "/bin/echo",
+		Provider: "opencode",
+		WorkDir:  "/tmp/workdir",
+	}
+
+	cmd, _, err := srv.buildSessionResume(info)
+	if err != nil {
+		t.Fatalf("buildSessionResume: %v", err)
+	}
+	if got, want := cmd, "/bin/echo"; got != want {
+		t.Fatalf("resume command = %q, want %q", got, want)
+	}
+}
+
 func TestBuildSessionResumePropagatesMCPResolutionError(t *testing.T) {
 	supportsACP := true
 	fs := newSessionFakeState(t)

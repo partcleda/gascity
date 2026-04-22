@@ -1492,6 +1492,62 @@ func TestHandleSessionCreateAsync_PoolTemplateWithoutAliasUsesGeneratedWorkDirId
 	}
 }
 
+func TestResolveAgentCreateContextUsesConcreteIdentityForMCPMaterialization(t *testing.T) {
+	supportsACP := true
+	fs := newSessionFakeState(t)
+	fs.cfg.Agents = []config.Agent{{
+		Name:              "ant",
+		Dir:               "myrig",
+		Provider:          "opencode",
+		Session:           "acp",
+		WorkDir:           ".gc/worktrees/{{.Rig}}/ants/{{.AgentBase}}",
+		MinActiveSessions: intPtr(0),
+		MaxActiveSessions: intPtr(4),
+	}}
+	fs.cfg.NamedSessions = nil
+	fs.cfg.Providers["opencode"] = config.ProviderSpec{
+		DisplayName: "OpenCode",
+		Command:     "/bin/echo",
+		PathCheck:   "true",
+		SupportsACP: &supportsACP,
+		ACPCommand:  "/bin/echo",
+		ACPArgs:     []string{"acp"},
+	}
+	fs.cfg.PackMCPDir = filepath.Join(fs.cityPath, "mcp")
+	if err := os.MkdirAll(fs.cfg.PackMCPDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(mcp): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(fs.cfg.PackMCPDir, "identity.template.toml"), []byte(`
+name = "identity"
+command = "/bin/mcp"
+args = ["{{.AgentName}}", "{{.WorkDir}}", "{{.TemplateName}}"]
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(mcp): %v", err)
+	}
+
+	srv := New(fs)
+	createCtx, err := srv.resolveAgentCreateContext("myrig/ant", "")
+	if err != nil {
+		t.Fatalf("resolveAgentCreateContext: %v", err)
+	}
+	mcpServers, err := srv.sessionMCPServers("myrig/ant", "opencode", createCtx.Identity, createCtx.WorkDir, "acp", "agent")
+	if err != nil {
+		t.Fatalf("sessionMCPServers: %v", err)
+	}
+	if len(mcpServers) != 1 {
+		t.Fatalf("len(mcpServers) = %d, want 1", len(mcpServers))
+	}
+	if got, want := mcpServers[0].Args[0], createCtx.Identity; got != want {
+		t.Fatalf("Args[0] = %q, want %q", got, want)
+	}
+	if got, want := mcpServers[0].Args[1], createCtx.WorkDir; got != want {
+		t.Fatalf("Args[1] = %q, want %q", got, want)
+	}
+	if got, want := mcpServers[0].Args[2], "myrig/ant"; got != want {
+		t.Fatalf("Args[2] = %q, want %q", got, want)
+	}
+}
+
 func TestHandleSessionCreateAsync_PoolTemplateCanonicalizesAliasCollisions(t *testing.T) {
 	fs := newSessionFakeState(t)
 	fs.cfg.Agents = []config.Agent{{

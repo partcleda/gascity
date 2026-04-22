@@ -268,11 +268,7 @@ func (s *Server) resolveSessionRuntime(info session.Info) (*config.ResolvedProvi
 			if info.WorkDir != "" {
 				workDir = info.WorkDir
 			}
-			return resolved, workDir, firstNonEmptyString(
-				strings.TrimSpace(info.Transport),
-				strings.TrimSpace(transport),
-				strings.TrimSpace(resolved.DefaultSessionTransport()),
-			)
+			return resolved, workDir, firstNonEmptyString(strings.TrimSpace(info.Transport), strings.TrimSpace(transport))
 		}
 	}
 

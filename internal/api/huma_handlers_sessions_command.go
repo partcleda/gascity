@@ -17,7 +17,6 @@ import (
 	"github.com/gastownhall/gascity/internal/runtime"
 	"github.com/gastownhall/gascity/internal/session"
 	"github.com/gastownhall/gascity/internal/sessionlog"
-	workdirutil "github.com/gastownhall/gascity/internal/workdir"
 	"github.com/gastownhall/gascity/internal/worker"
 )
 
@@ -87,22 +86,15 @@ func (s *Server) humaHandleSessionCreate(ctx context.Context, input *SessionCrea
 	if cfg == nil {
 		return nil, huma.Error500InternalServerError("no city config loaded")
 	}
-	agentCfg, ok := resolveSessionTemplateAgent(cfg, template)
-	if !ok {
-		return nil, huma.Error500InternalServerError("resolved agent template disappeared: " + template)
-	}
-	if alias != "" && agentCfg.SupportsMultipleSessions() {
-		alias = workdirutil.SessionQualifiedName(s.state.CityPath(), agentCfg, cfg.Rigs, alias, "")
-	}
-	explicitName, err := sessionExplicitNameForCreate(agentCfg, alias)
-	if err != nil {
-		return nil, humaSessionManagerError(err)
-	}
-	workDirQualifiedName := workdirutil.SessionQualifiedName(s.state.CityPath(), agentCfg, cfg.Rigs, alias, explicitName)
-	workDir, err = s.resolveSessionWorkDir(agentCfg, workDirQualifiedName)
+	createCtx, err := s.resolveAgentCreateContext(template, alias)
 	if err != nil {
 		return nil, huma.Error500InternalServerError(err.Error())
 	}
+	agentCfg := createCtx.Agent
+	alias = createCtx.Alias
+	explicitName := createCtx.ExplicitName
+	workDirQualifiedName := createCtx.Identity
+	workDir = createCtx.WorkDir
 
 	launchCommand, err := config.BuildProviderLaunchCommandWithoutOptions(s.state.CityPath(), resolved, transport)
 	if err != nil {
@@ -110,7 +102,7 @@ func (s *Server) humaHandleSessionCreate(ctx context.Context, input *SessionCrea
 	}
 	command := launchCommand.Command
 	extraMeta := sessionTemplateOverridesMetadata(body.Options, body.Message)
-	mcpServers, err := s.sessionMCPServers(template, resolved.Name, firstNonEmptyString(alias, template), workDir, transport, kind)
+	mcpServers, err := s.sessionMCPServers(template, resolved.Name, workDirQualifiedName, workDir, transport, kind)
 	if err != nil {
 		return nil, huma.Error500InternalServerError(err.Error())
 	}

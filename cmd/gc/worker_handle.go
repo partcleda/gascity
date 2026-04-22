@@ -465,11 +465,7 @@ func resolveWorkerRuntimeProviderWithConfig(cfg *config.City, info session.Info,
 	if sessionKind != "provider" {
 		if found, ok := resolveAgentIdentity(cfg, info.Template, ""); ok {
 			if resolved, err := config.ResolveProvider(&found, &cfg.Workspace, cfg.Providers, exec.LookPath); err == nil {
-				return resolved, firstNonEmptyWorkerString(
-					strings.TrimSpace(info.Transport),
-					strings.TrimSpace(found.Session),
-					strings.TrimSpace(resolved.DefaultSessionTransport()),
-				)
+				return resolved, firstNonEmptyWorkerString(strings.TrimSpace(info.Transport), strings.TrimSpace(found.Session))
 			}
 		}
 	}

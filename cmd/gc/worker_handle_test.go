@@ -299,6 +299,46 @@ acp_args = ["acp"]
 	}
 }
 
+func TestResolvedWorkerRuntimeWithConfigKeepsDefaultTransportWithoutExplicitACPTemplate(t *testing.T) {
+	cityDir := t.TempDir()
+	writePhase0InterfaceCity(t, cityDir, `[workspace]
+name = "test-city"
+
+[beads]
+provider = "file"
+
+[[agent]]
+name = "worker"
+provider = "stub"
+
+[providers.stub]
+command = "/bin/echo"
+supports_acp = true
+acp_command = "/bin/echo"
+acp_args = ["acp"]
+`)
+
+	cfg, err := loadCityConfig(cityDir)
+	if err != nil {
+		t.Fatalf("loadCityConfig: %v", err)
+	}
+
+	resolved, err := resolvedWorkerRuntimeWithConfig(cityDir, cfg, session.Info{
+		Template: "worker",
+		Command:  "/bin/echo",
+		WorkDir:  cityDir,
+	}, "")
+	if err != nil {
+		t.Fatalf("resolvedWorkerRuntimeWithConfig: %v", err)
+	}
+	if resolved == nil {
+		t.Fatal("resolvedWorkerRuntimeWithConfig() = nil")
+	}
+	if got, want := resolved.Command, "/bin/echo"; got != want {
+		t.Fatalf("Command = %q, want %q", got, want)
+	}
+}
+
 func TestResolvedWorkerRuntimeWithConfigUsesStoredACPTransportForProviderSession(t *testing.T) {
 	cityDir := t.TempDir()
 	writePhase0InterfaceCity(t, cityDir, `[workspace]

@@ -132,8 +132,16 @@ func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 		writeSessionManagerError(w, err)
 		return
 	}
+	createCtx, err := s.resolveAgentCreateContext(template, alias)
+	if err != nil {
+		s.idem.unreserve(idemKey)
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	alias = createCtx.Alias
+	workDir = createCtx.WorkDir
 
-	mcpServers, err := s.sessionMCPServers(template, resolved.Name, firstNonEmptyString(alias, template), workDir, transport, kind)
+	mcpServers, err := s.sessionMCPServers(template, resolved.Name, createCtx.Identity, workDir, transport, kind)
 	if err != nil {
 		s.idem.unreserve(idemKey)
 		writeError(w, http.StatusInternalServerError, "internal", err.Error())
@@ -156,13 +164,14 @@ func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 	if extraMeta == nil {
 		extraMeta = make(map[string]string)
 	}
+	extraMeta["agent_name"] = createCtx.Identity
 	extraMeta["session_origin"] = "ephemeral"
 
 	// Agent sessions always use async (bead-only) creation. The reconciler
 	// starts the agent process on the next tick. This avoids blocking the
 	// HTTP response for 10-30s while the agent boots in tmux, and lets MC
 	// show the session in the sidebar immediately via optimistic UI.
-	resolvedCfg, err := resolvedSessionConfigForProvider(alias, "", template, title, transport, extraMeta, resolved, command, workDir, mcpServers)
+	resolvedCfg, err := resolvedSessionConfigForProvider(alias, createCtx.ExplicitName, template, title, transport, extraMeta, resolved, command, workDir, mcpServers)
 	if err != nil {
 		s.idem.unreserve(idemKey)
 		writeSessionManagerError(w, err)
@@ -175,8 +184,21 @@ func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var info session.Info
-	err = session.WithCitySessionAliasLock(s.state.CityPath(), alias, func() error {
+	reservationIDs := []string{alias, createCtx.ExplicitName}
+	reserveConcreteIdentity := createCtx.Agent.SupportsMultipleSessions() && strings.TrimSpace(createCtx.Identity) != ""
+	if reserveConcreteIdentity {
+		reservationIDs = append(reservationIDs, createCtx.Identity)
+	}
+	err = session.WithCitySessionIdentifierLocks(s.state.CityPath(), reservationIDs, func() error {
 		if err := session.EnsureAliasAvailableWithConfig(store, s.state.Config(), alias, ""); err != nil {
+			return err
+		}
+		if reserveConcreteIdentity && createCtx.Identity != alias {
+			if err := session.EnsureAliasAvailableWithConfig(store, s.state.Config(), createCtx.Identity, ""); err != nil {
+				return err
+			}
+		}
+		if err := session.EnsureSessionNameAvailableWithConfig(store, s.state.Config(), createCtx.ExplicitName, ""); err != nil {
 			return err
 		}
 		var createErr error
