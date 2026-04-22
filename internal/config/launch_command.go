@@ -31,10 +31,7 @@ func BuildProviderLaunchCommand(cityPath string, resolved *ResolvedProvider, opt
 		return ProviderLaunchCommand{}, fmt.Errorf("resolved provider is nil")
 	}
 
-	command := resolved.CommandString()
-	if transport == "acp" {
-		command = resolved.ACPCommandString()
-	}
+	command := providerLaunchBaseCommand(resolved, transport)
 	if len(resolved.OptionsSchema) > 0 {
 		mergedOptions := make(map[string]string, len(resolved.EffectiveDefaults)+len(optionOverrides))
 		for key, value := range resolved.EffectiveDefaults {
@@ -55,7 +52,34 @@ func BuildProviderLaunchCommand(cityPath string, resolved *ResolvedProvider, opt
 		}
 	}
 
-	settingsPath, settingsRel := ProviderSettingsSource(cityPath, resolved.Name)
+	return appendProviderSettings(cityPath, resolved.Name, command), nil
+}
+
+// BuildProviderLaunchCommandWithoutOptions composes the transport-specific
+// provider command plus any provider-owned settings file without applying
+// schema-managed defaults or explicit option overrides.
+//
+// Deferred agent-session creation uses this helper because option state is
+// stored separately in template_overrides and applied later at actual start
+// time, but the stored base command must still match the selected transport
+// and provider-owned settings semantics.
+func BuildProviderLaunchCommandWithoutOptions(cityPath string, resolved *ResolvedProvider, transport string) (ProviderLaunchCommand, error) {
+	if resolved == nil {
+		return ProviderLaunchCommand{}, fmt.Errorf("resolved provider is nil")
+	}
+	return appendProviderSettings(cityPath, resolved.Name, providerLaunchBaseCommand(resolved, transport)), nil
+}
+
+func providerLaunchBaseCommand(resolved *ResolvedProvider, transport string) string {
+	command := resolved.CommandString()
+	if transport == "acp" {
+		command = resolved.ACPCommandString()
+	}
+	return command
+}
+
+func appendProviderSettings(cityPath, providerName, command string) ProviderLaunchCommand {
+	settingsPath, settingsRel := ProviderSettingsSource(cityPath, providerName)
 	if settingsPath != "" {
 		command = command + " " + fmt.Sprintf("--settings %q", settingsPath)
 	}
@@ -64,7 +88,7 @@ func BuildProviderLaunchCommand(cityPath string, resolved *ResolvedProvider, opt
 		Command:      command,
 		SettingsPath: settingsPath,
 		SettingsRel:  settingsRel,
-	}, nil
+	}
 }
 
 // ProviderSettingsSource returns the provider-owned settings file that should

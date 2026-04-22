@@ -56,6 +56,10 @@ func (s *Server) humaHandleSessionCreate(ctx context.Context, input *SessionCrea
 		}
 		return nil, huma.Error500InternalServerError(err.Error())
 	}
+	transport, err = validateSessionTransport(resolved, transport, s.state.SessionProvider())
+	if err != nil {
+		return nil, huma.Error503ServiceUnavailable(err.Error())
+	}
 
 	if len(body.Options) > 0 {
 		if len(resolved.OptionsSchema) == 0 {
@@ -105,7 +109,11 @@ func (s *Server) humaHandleSessionCreate(ctx context.Context, input *SessionCrea
 		return nil, huma.Error500InternalServerError(err.Error())
 	}
 
-	command := sessionCreateAgentCommand(resolved, transport)
+	launchCommand, err := config.BuildProviderLaunchCommandWithoutOptions(s.state.CityPath(), resolved, transport)
+	if err != nil {
+		return nil, huma.Error500InternalServerError(err.Error())
+	}
+	command := launchCommand.Command
 	extraMeta := sessionTemplateOverridesMetadata(body.Options, body.Message)
 
 	mgr := s.sessionManager(store)

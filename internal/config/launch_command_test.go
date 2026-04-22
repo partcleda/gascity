@@ -104,3 +104,33 @@ func TestBuildProviderLaunchCommandUsesACPCommand(t *testing.T) {
 		}
 	})
 }
+
+func TestBuildProviderLaunchCommandWithoutOptionsSkipsDefaultsButKeepsSettings(t *testing.T) {
+	dir := t.TempDir()
+	runtimeDir := filepath.Join(dir, ".gc")
+	if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runtimeDir, "settings.json"), []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	spec := BuiltinProviders()["claude"]
+	rp := specToResolved("claude", &spec)
+
+	got, err := BuildProviderLaunchCommandWithoutOptions(dir, rp, "")
+	if err != nil {
+		t.Fatalf("BuildProviderLaunchCommandWithoutOptions: %v", err)
+	}
+
+	wantCommand := fmt.Sprintf("claude --settings %q", filepath.Join(dir, ".gc", "settings.json"))
+	if got.Command != wantCommand {
+		t.Fatalf("Command = %q, want %q", got.Command, wantCommand)
+	}
+	if got.SettingsPath != filepath.Join(dir, ".gc", "settings.json") {
+		t.Fatalf("SettingsPath = %q, want %q", got.SettingsPath, filepath.Join(dir, ".gc", "settings.json"))
+	}
+	if got.SettingsRel != filepath.Join(".gc", "settings.json") {
+		t.Fatalf("SettingsRel = %q, want %q", got.SettingsRel, filepath.Join(".gc", "settings.json"))
+	}
+}

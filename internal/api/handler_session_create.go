@@ -88,8 +88,14 @@ func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "internal", err.Error())
 			return
 		}
-		// Agent track: command comes from the agent config as-is.
-		// Do NOT inject OptionsSchema defaults — agents encode their own CLI flags.
+		transport, err = validateSessionTransport(resolved, transport, s.state.SessionProvider())
+		if err != nil {
+			s.idem.unreserve(idemKey)
+			writeError(w, http.StatusServiceUnavailable, "provider_unavailable", err.Error())
+			return
+		}
+		// Agent track stores a transport-aligned base command only.
+		// Do NOT inject OptionsSchema defaults or explicit overrides here.
 		// Options are stored as template_overrides and applied at start time
 		// by the session lifecycle via ResolveExplicitOptions.
 		if len(body.Options) > 0 {
@@ -134,7 +140,13 @@ func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	command := sessionCreateAgentCommand(resolved, transport)
+	launchCommand, err := config.BuildProviderLaunchCommandWithoutOptions(s.state.CityPath(), resolved, transport)
+	if err != nil {
+		s.idem.unreserve(idemKey)
+		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		return
+	}
+	command := launchCommand.Command
 
 	// Build template_overrides metadata. Includes schema overrides AND
 	// the initial message (as "initial_message" key). The reconciler
@@ -376,13 +388,6 @@ func (s *Server) createProviderSession(w http.ResponseWriter, r *http.Request, s
 	statusCode := http.StatusCreated
 	s.idem.storeResponse(idemKey, bodyHash, statusCode, resp)
 	writeJSON(w, statusCode, resp)
-}
-
-func sessionCreateAgentCommand(resolved *config.ResolvedProvider, transport string) string {
-	if strings.TrimSpace(transport) == "acp" {
-		return firstNonEmptyString(resolved.ACPCommandString(), resolved.Name)
-	}
-	return firstNonEmptyString(resolved.CommandString(), resolved.Name)
 }
 
 func sessionTemplateOverridesMetadata(options map[string]string, message string) map[string]string {

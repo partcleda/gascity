@@ -279,6 +279,10 @@ func (s *Server) materializeNamedSessionWithContext(ctx context.Context, store b
 	if err != nil {
 		return "", err
 	}
+	transport, err = validateSessionTransport(resolved, transport, s.state.SessionProvider())
+	if err != nil {
+		return "", err
+	}
 	var workDir string
 	workDirQualifiedName := workdirutil.SessionQualifiedName(s.state.CityPath(), *spec.Agent, s.state.Config().Rigs, spec.Identity, "")
 	workDir, err = s.resolveSessionWorkDir(*spec.Agent, workDirQualifiedName)

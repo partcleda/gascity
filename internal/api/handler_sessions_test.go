@@ -1157,8 +1157,12 @@ func TestHandleSessionCreateUsesACPTransportCommandForAgentTemplate(t *testing.T
 		ACPCommand:  "/bin/echo",
 		ACPArgs:     []string{"acp"},
 	}
-	srv := New(fs)
-	h := newTestCityHandlerWith(t, fs, srv)
+	state := &stateWithSessionProvider{
+		fakeState: fs,
+		provider:  &transportCapableProvider{Fake: runtime.NewFake()},
+	}
+	srv := New(state)
+	h := newTestCityHandlerWith(t, state, srv)
 
 	req := newPostRequest(cityURL(fs, "/sessions"), strings.NewReader(`{"kind":"agent","name":"myrig/worker"}`))
 	rec := httptest.NewRecorder()
@@ -1172,7 +1176,7 @@ func TestHandleSessionCreateUsesACPTransportCommandForAgentTemplate(t *testing.T
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	bead, err := fs.cityBeadStore.Get(resp.ID)
+	bead, err := state.cityBeadStore.Get(resp.ID)
 	if err != nil {
 		t.Fatalf("Get(%s): %v", resp.ID, err)
 	}
@@ -1197,7 +1201,11 @@ func TestHumaHandleSessionCreateUsesACPTransportCommandForAgentTemplate(t *testi
 		ACPCommand:  "/bin/echo",
 		ACPArgs:     []string{"acp"},
 	}
-	srv := New(fs)
+	state := &stateWithSessionProvider{
+		fakeState: fs,
+		provider:  &transportCapableProvider{Fake: runtime.NewFake()},
+	}
+	srv := New(state)
 
 	out, err := srv.humaHandleSessionCreate(context.Background(), &SessionCreateInput{
 		Body: sessionCreateBody{
@@ -1211,7 +1219,7 @@ func TestHumaHandleSessionCreateUsesACPTransportCommandForAgentTemplate(t *testi
 	if got, want := out.Status, http.StatusAccepted; got != want {
 		t.Fatalf("status = %d, want %d", got, want)
 	}
-	bead, err := fs.cityBeadStore.Get(out.Body.ID)
+	bead, err := state.cityBeadStore.Get(out.Body.ID)
 	if err != nil {
 		t.Fatalf("Get(%s): %v", out.Body.ID, err)
 	}
@@ -1220,6 +1228,61 @@ func TestHumaHandleSessionCreateUsesACPTransportCommandForAgentTemplate(t *testi
 	}
 	if got, want := bead.Metadata["transport"], "acp"; got != want {
 		t.Fatalf("transport metadata = %q, want %q", got, want)
+	}
+}
+
+func TestHandleSessionCreateRejectsACPAgentWithoutACPRouting(t *testing.T) {
+	supportsACP := true
+	fs := newSessionFakeState(t)
+	fs.cfg.Agents[0].Provider = "opencode"
+	fs.cfg.Agents[0].Session = "acp"
+	fs.cfg.Providers["opencode"] = config.ProviderSpec{
+		DisplayName: "OpenCode",
+		Command:     "/bin/echo",
+		PathCheck:   "true",
+		SupportsACP: &supportsACP,
+		ACPCommand:  "/bin/echo",
+		ACPArgs:     []string{"acp"},
+	}
+	srv := New(fs)
+	h := newTestCityHandlerWith(t, fs, srv)
+
+	req := newPostRequest(cityURL(fs, "/sessions"), strings.NewReader(`{"kind":"agent","name":"myrig/worker"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "requires ACP transport") {
+		t.Fatalf("body = %q, want ACP transport error", rec.Body.String())
+	}
+}
+
+func TestHumaHandleSessionCreateRejectsACPAgentWithoutACPRouting(t *testing.T) {
+	supportsACP := true
+	fs := newSessionFakeState(t)
+	fs.cfg.Agents[0].Provider = "opencode"
+	fs.cfg.Agents[0].Session = "acp"
+	fs.cfg.Providers["opencode"] = config.ProviderSpec{
+		DisplayName: "OpenCode",
+		Command:     "/bin/echo",
+		PathCheck:   "true",
+		SupportsACP: &supportsACP,
+		ACPCommand:  "/bin/echo",
+		ACPArgs:     []string{"acp"},
+	}
+	srv := New(fs)
+
+	if _, err := srv.humaHandleSessionCreate(context.Background(), &SessionCreateInput{
+		Body: sessionCreateBody{
+			Kind: "agent",
+			Name: "myrig/worker",
+		},
+	}); err == nil {
+		t.Fatal("humaHandleSessionCreate() error = nil, want ACP routing error")
+	} else if !strings.Contains(err.Error(), "requires ACP transport") {
+		t.Fatalf("humaHandleSessionCreate() error = %v, want ACP transport error", err)
 	}
 }
 
@@ -1501,6 +1564,42 @@ func TestMaterializeNamedSessionStampsProviderFamilyMetadata(t *testing.T) {
 	}
 	if got := cfg.Env["GC_PROVIDER"]; got != "claude" {
 		t.Fatalf("GC_PROVIDER = %q, want claude", got)
+	}
+}
+
+func TestMaterializeNamedSessionRejectsACPTemplateWithoutACPRouting(t *testing.T) {
+	supportsACP := true
+	fs := newSessionFakeState(t)
+	fs.cfg.Agents[0].Provider = "opencode"
+	fs.cfg.Agents[0].Session = "acp"
+	fs.cfg.Providers["opencode"] = config.ProviderSpec{
+		DisplayName: "OpenCode",
+		Command:     "/bin/echo",
+		PathCheck:   "true",
+		SupportsACP: &supportsACP,
+		ACPCommand:  "/bin/echo",
+		ACPArgs:     []string{"acp"},
+	}
+	srv := New(fs)
+
+	spec, ok, err := srv.findNamedSessionSpecForTarget(fs.cityBeadStore, "worker")
+	if err != nil {
+		t.Fatalf("findNamedSessionSpecForTarget: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected named session spec")
+	}
+	if _, err := srv.materializeNamedSession(fs.cityBeadStore, spec); err == nil {
+		t.Fatal("materializeNamedSession() error = nil, want ACP routing error")
+	} else if !strings.Contains(err.Error(), "requires ACP transport") {
+		t.Fatalf("materializeNamedSession() error = %v, want ACP transport error", err)
+	}
+	items, err := fs.cityBeadStore.ListByLabel(session.LabelSession, 0)
+	if err != nil {
+		t.Fatalf("ListByLabel: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("session bead count = %d, want 0", len(items))
 	}
 }
 
