@@ -215,20 +215,36 @@ func newSessionProviderFromContextWithError(ctx sessionProviderContext, sessionB
 // hasACPAgents reports whether any agent in the config uses session = "acp".
 func hasACPAgents(agents []config.Agent) bool {
 	for _, a := range agents {
-		if a.Session == "acp" {
+		if strings.TrimSpace(a.Session) == "acp" {
 			return true
 		}
 	}
 	return false
 }
 
+func agentSessionCreateTransport(cfg *config.City, agentCfg config.Agent) string {
+	if cfg == nil {
+		return strings.TrimSpace(agentCfg.Session)
+	}
+	resolved, err := config.ResolveProvider(
+		&agentCfg,
+		&cfg.Workspace,
+		cfg.Providers,
+		func(name string) (string, error) { return name, nil },
+	)
+	if err != nil {
+		return strings.TrimSpace(agentCfg.Session)
+	}
+	return config.ResolveSessionCreateTransport(agentCfg.Session, resolved)
+}
+
 // configuredACPSessionNames resolves the runtime session names for ACP-backed
 // agents using a single session-bead snapshot. When the snapshot is unavailable
 // or bead lookup fails, it falls back to the legacy deterministic name.
-func configuredACPSessionNames(snapshot *sessionBeadSnapshot, cityName, sessionTemplate string, agents []config.Agent) []string {
+func configuredACPSessionNames(snapshot *sessionBeadSnapshot, cityName, sessionTemplate string, cfg *config.City, agents []config.Agent) []string {
 	names := make([]string, 0, len(agents))
 	for _, a := range agents {
-		if a.Session != "acp" {
+		if agentSessionCreateTransport(cfg, a) != "acp" {
 			continue
 		}
 		sessName := agent.SessionNameFor(cityName, a.QualifiedName(), sessionTemplate)
@@ -358,7 +374,7 @@ func configuredACPRouteNames(snapshot *sessionBeadSnapshot, cityName string, cfg
 	if cfg == nil {
 		return names
 	}
-	for _, name := range configuredACPSessionNames(snapshot, cityName, cfg.Workspace.SessionTemplate, cfg.Agents) {
+	for _, name := range configuredACPSessionNames(snapshot, cityName, cfg.Workspace.SessionTemplate, cfg, cfg.Agents) {
 		if name == "" || seen[name] {
 			continue
 		}
@@ -367,7 +383,7 @@ func configuredACPRouteNames(snapshot *sessionBeadSnapshot, cityName string, cfg
 	}
 	for _, named := range cfg.NamedSessions {
 		agentCfg := config.FindAgent(cfg, named.TemplateQualifiedName())
-		if agentCfg == nil || agentCfg.Session != "acp" {
+		if agentCfg == nil || agentSessionCreateTransport(cfg, *agentCfg) != "acp" {
 			continue
 		}
 		sessionName := config.NamedSessionRuntimeName(cityName, cfg.Workspace, named.QualifiedName())

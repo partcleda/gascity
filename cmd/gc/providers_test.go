@@ -227,7 +227,7 @@ func TestConfiguredACPSessionNames_UsesProvidedSnapshot(t *testing.T) {
 		{Name: "mayor"},
 	}
 
-	got := configuredACPSessionNames(snapshot, "city", "", agents)
+	got := configuredACPSessionNames(snapshot, "city", "", nil, agents)
 	want := []string{
 		"custom-reviewer",
 		agent.SessionNameFor("city", "witness", ""),
@@ -436,6 +436,21 @@ func TestNewSessionProvider_PreregistersACPNamedSessionRuntimeName(t *testing.T)
 	cityDir := t.TempDir()
 	t.Setenv("GC_CITY", cityDir)
 	writeACPNamedSessionRouteCityTOML(t, cityDir, "test-city")
+
+	sp := newSessionProvider()
+	namedRuntime := config.NamedSessionRuntimeName("test-city", config.Workspace{}, "reviewer")
+	if err := sp.Attach(namedRuntime); err == nil || !strings.Contains(err.Error(), "ACP transport") {
+		t.Fatalf("Attach(%q) error = %v, want ACP transport error", namedRuntime, err)
+	}
+}
+
+func TestNewSessionProvider_PreregistersProviderDefaultACPNamedSessionRuntimeName(t *testing.T) {
+	t.Setenv("GC_BEADS", "file")
+	t.Setenv("GC_SESSION", "fake")
+
+	cityDir := t.TempDir()
+	t.Setenv("GC_CITY", cityDir)
+	writeProviderDefaultACPNamedSessionRouteCityTOML(t, cityDir, "test-city")
 
 	sp := newSessionProvider()
 	namedRuntime := config.NamedSessionRuntimeName("test-city", config.Workspace{}, "reviewer")
@@ -743,6 +758,36 @@ template = "reviewer-template"
 name = "mayor"
 provider = "claude"
 start_command = "echo"
+`)
+	if err := os.WriteFile(filepath.Join(dir, "city.toml"), data, 0o644); err != nil {
+		t.Fatalf("WriteFile(city.toml): %v", err)
+	}
+}
+
+func writeProviderDefaultACPNamedSessionRouteCityTOML(t *testing.T, dir, cityName string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, ".gc"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(.gc): %v", err)
+	}
+	data := []byte(`[workspace]
+name = "` + cityName + `"
+
+[beads]
+provider = "file"
+
+[[agent]]
+name = "reviewer"
+provider = "custom-acp"
+
+[[named_session]]
+template = "reviewer"
+
+[providers.custom-acp]
+command = "/bin/echo"
+path_check = "true"
+supports_acp = true
+acp_command = "/bin/echo"
+acp_args = ["acp"]
 `)
 	if err := os.WriteFile(filepath.Join(dir, "city.toml"), data, 0o644); err != nil {
 		t.Fatalf("WriteFile(city.toml): %v", err)

@@ -103,3 +103,29 @@ func TestResolveSessionTemplateKeepsLegacyRuntimeTransportDefault(t *testing.T) 
 		t.Fatalf("transport = %q, want empty runtime default", transport)
 	}
 }
+
+func TestConfiguredSessionTransportUsesProviderACPDefaultForAgentTemplates(t *testing.T) {
+	supportsACP := true
+	cfg := &config.City{
+		Workspace: config.Workspace{Name: "test-city"},
+		Agents: []config.Agent{{
+			Name:     "worker",
+			Dir:      "myrig",
+			Provider: "custom-acp",
+		}},
+		Providers: map[string]config.ProviderSpec{
+			"custom-acp": {
+				Command:     "/bin/echo",
+				PathCheck:   "true",
+				SupportsACP: &supportsACP,
+				ACPCommand:  "/bin/echo",
+				ACPArgs:     []string{"acp"},
+			},
+		},
+	}
+
+	transport := configuredSessionTransport(cfg, "myrig/worker", "")
+	if transport != "acp" {
+		t.Fatalf("configuredSessionTransport() = %q, want %q", transport, "acp")
+	}
+}

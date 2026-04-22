@@ -17,7 +17,16 @@ func newSessionManagerWithConfig(cityPath string, store beads.Store, sp runtime.
 	return session.NewManagerWithTransportResolverAndCityPath(store, sp, cityPath, func(template, provider string) string {
 		agentCfg, ok := resolveAgentIdentity(cfg, template, rigContext)
 		if ok {
-			return agentCfg.Session
+			resolved, err := config.ResolveProvider(
+				&agentCfg,
+				&cfg.Workspace,
+				cfg.Providers,
+				func(name string) (string, error) { return name, nil },
+			)
+			if err != nil {
+				return agentCfg.Session
+			}
+			return config.ResolveSessionCreateTransport(agentCfg.Session, resolved)
 		}
 		provider = strings.TrimSpace(provider)
 		if provider == "" {

@@ -28,7 +28,16 @@ func configuredSessionTransport(cfg *config.City, template, provider string) str
 		return ""
 	}
 	if agentCfg, ok := resolveSessionTemplateAgent(cfg, template); ok {
-		return strings.TrimSpace(agentCfg.Session)
+		resolved, err := config.ResolveProvider(
+			&agentCfg,
+			&cfg.Workspace,
+			cfg.Providers,
+			func(name string) (string, error) { return name, nil },
+		)
+		if err != nil {
+			return strings.TrimSpace(agentCfg.Session)
+		}
+		return config.ResolveSessionCreateTransport(agentCfg.Session, resolved)
 	}
 	provider = strings.TrimSpace(provider)
 	if provider == "" {

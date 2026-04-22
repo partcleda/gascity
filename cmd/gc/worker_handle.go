@@ -33,7 +33,16 @@ func workerFactoryWithConfig(cityPath string, store beads.Store, sp runtime.Prov
 		resolveTransport = func(template, provider string) string {
 			agentCfg, ok := resolveAgentIdentity(cfg, template, rigContext)
 			if ok {
-				return agentCfg.Session
+				resolved, err := config.ResolveProvider(
+					&agentCfg,
+					&cfg.Workspace,
+					cfg.Providers,
+					func(name string) (string, error) { return name, nil },
+				)
+				if err != nil {
+					return agentCfg.Session
+				}
+				return config.ResolveSessionCreateTransport(agentCfg.Session, resolved)
 			}
 			provider = strings.TrimSpace(provider)
 			if provider == "" {
@@ -530,7 +539,7 @@ func resolveWorkerRuntimeProviderWithConfig(cfg *config.City, info session.Info,
 	if sessionKind != "provider" {
 		if found, ok := resolveAgentIdentity(cfg, info.Template, ""); ok {
 			if resolved, err := config.ResolveProvider(&found, &cfg.Workspace, cfg.Providers, exec.LookPath); err == nil {
-				return resolved, firstNonEmptyWorkerString(strings.TrimSpace(info.Transport), strings.TrimSpace(found.Session))
+				return resolved, firstNonEmptyWorkerString(strings.TrimSpace(info.Transport), config.ResolveSessionCreateTransport(found.Session, resolved))
 			}
 		}
 	}
