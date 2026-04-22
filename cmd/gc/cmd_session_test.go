@@ -390,6 +390,113 @@ func TestCmdSessionNew_PoolTemplateWithoutAliasUsesGeneratedWorkDirIdentity(t *t
 	}
 }
 
+func TestCmdSessionNew_ACPTemplatePersistsStoredMCPMetadata(t *testing.T) {
+	t.Setenv("GC_BEADS", "file")
+	t.Setenv("GC_SESSION", "fake")
+
+	cityDir := t.TempDir()
+	t.Setenv("GC_CITY", cityDir)
+	writePoolACPSessionCityTOML(t, cityDir)
+	writeCatalogFile(t, cityDir, "mcp/identity.template.toml", `
+name = "identity"
+command = "/bin/mcp"
+args = ["{{.AgentName}}", "{{.WorkDir}}", "{{.TemplateName}}"]
+`)
+
+	sockPath := filepath.Join(cityDir, ".gc", "controller.sock")
+	lis, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("Listen(%q): %v", sockPath, err)
+	}
+	defer lis.Close() //nolint:errcheck
+
+	commands := make(chan string, 3)
+	errCh := make(chan error, 1)
+	go func() {
+		defer close(commands)
+		for i := 0; i < 3; i++ {
+			conn, err := lis.Accept()
+			if err != nil {
+				errCh <- err
+				return
+			}
+			buf := make([]byte, 64)
+			n, err := conn.Read(buf)
+			if err != nil {
+				conn.Close() //nolint:errcheck
+				errCh <- err
+				return
+			}
+			cmd := string(buf[:n])
+			commands <- cmd
+			reply := "ok\n"
+			if cmd == "ping\n" {
+				reply = "123\n"
+			}
+			if _, err := conn.Write([]byte(reply)); err != nil {
+				conn.Close() //nolint:errcheck
+				errCh <- err
+				return
+			}
+			conn.Close() //nolint:errcheck
+		}
+	}()
+
+	var stdout, stderr bytes.Buffer
+	if code := cmdSessionNew([]string{"demo/ant"}, "", "", "", true, &stdout, &stderr); code != 0 {
+		t.Fatalf("cmdSessionNew(acp) = %d, want 0; stderr=%s", code, stderr.String())
+	}
+
+	gotCommands := make([]string, 0, 3)
+	deadline := time.After(2 * time.Second)
+	for len(gotCommands) < 3 {
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Fatalf("controller socket: %v", err)
+			}
+		case cmd, ok := <-commands:
+			if !ok {
+				if len(gotCommands) != 3 {
+					t.Fatalf("controller commands = %v, want ping plus 2 pokes", gotCommands)
+				}
+				break
+			}
+			gotCommands = append(gotCommands, cmd)
+		case <-deadline:
+			t.Fatalf("timed out waiting for controller pokes, got %v", gotCommands)
+		}
+	}
+
+	bead := onlySessionBead(t, cityDir)
+	if got := bead.Metadata[session.MCPIdentityMetadataKey]; got == "" {
+		t.Fatal("mcp_identity metadata = empty, want persisted identity")
+	}
+	if got, want := bead.Metadata[session.MCPIdentityMetadataKey], bead.Metadata["agent_name"]; got != want {
+		t.Fatalf("mcp_identity = %q, want agent_name %q", got, want)
+	}
+	if got := bead.Metadata[session.MCPServersSnapshotMetadataKey]; got == "" {
+		t.Fatal("mcp_servers_snapshot metadata = empty, want persisted snapshot")
+	}
+
+	servers, err := session.DecodeMCPServersSnapshot(bead.Metadata[session.MCPServersSnapshotMetadataKey])
+	if err != nil {
+		t.Fatalf("DecodeMCPServersSnapshot: %v", err)
+	}
+	if len(servers) != 1 {
+		t.Fatalf("len(snapshot) = %d, want 1", len(servers))
+	}
+	if got, want := servers[0].Args[0], bead.Metadata[session.MCPIdentityMetadataKey]; got != want {
+		t.Fatalf("snapshot Args[0] = %q, want %q", got, want)
+	}
+	if got, want := servers[0].Args[1], bead.Metadata["work_dir"]; got != want {
+		t.Fatalf("snapshot Args[1] = %q, want %q", got, want)
+	}
+	if got, want := servers[0].Args[2], "demo/ant"; got != want {
+		t.Fatalf("snapshot Args[2] = %q, want %q", got, want)
+	}
+}
+
 func TestCmdSessionNew_PoolTemplateRejectsAliasMatchingConcreteIdentity(t *testing.T) {
 	t.Setenv("GC_BEADS", "file")
 	t.Setenv("GC_SESSION", "fake")
@@ -1133,6 +1240,46 @@ start_command = "echo"
 work_dir = ".gc/worktrees/{{.Rig}}/ants/{{.AgentBase}}"
 min_active_sessions = 0
 max_active_sessions = 4
+`, rigRoot))
+	if err := os.WriteFile(filepath.Join(dir, "city.toml"), data, 0o644); err != nil {
+		t.Fatalf("WriteFile(city.toml): %v", err)
+	}
+}
+
+func writePoolACPSessionCityTOML(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, ".gc"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(.gc): %v", err)
+	}
+	rigRoot := filepath.Join(dir, "repos", "demo")
+	if err := os.MkdirAll(rigRoot, 0o755); err != nil {
+		t.Fatalf("MkdirAll(rig root): %v", err)
+	}
+	data := []byte(fmt.Sprintf(`[workspace]
+name = "test-city"
+
+[beads]
+provider = "file"
+
+[[rigs]]
+name = "demo"
+path = %q
+
+[[agent]]
+name = "ant"
+dir = "demo"
+provider = "stub"
+session = "acp"
+work_dir = ".gc/worktrees/{{.Rig}}/ants/{{.AgentBase}}"
+min_active_sessions = 0
+max_active_sessions = 4
+
+[providers.stub]
+command = "/bin/echo"
+path_check = "true"
+supports_acp = true
+acp_command = "/bin/echo"
+acp_args = ["acp"]
 `, rigRoot))
 	if err := os.WriteFile(filepath.Join(dir, "city.toml"), data, 0o644); err != nil {
 		t.Fatalf("WriteFile(city.toml): %v", err)

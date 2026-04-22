@@ -249,6 +249,20 @@ func cmdSessionNew(args []string, alias, title, titleHint string, noAttach bool,
 			if resolved.BuiltinAncestor != "" && resolved.BuiltinAncestor != resolved.Name {
 				kindMeta["builtin_ancestor"] = resolved.BuiltinAncestor
 			}
+			kindMeta, err = newSessionStoredMCPMetadata(
+				cityPath,
+				cfg,
+				alias,
+				canonicalTemplate,
+				resolved.Name,
+				workDir,
+				found.Session,
+				kindMeta,
+			)
+			if err != nil {
+				fmt.Fprintf(stderr, "gc session new: %v\n", err) //nolint:errcheck // best-effort stderr
+				return 1
+			}
 			handle, err := newWorkerSessionHandleForResolvedRuntimeWithConfig(
 				cityPath,
 				store,
@@ -332,6 +346,20 @@ func cmdSessionNew(args []string, alias, title, titleHint string, noAttach bool,
 	if resolved.BuiltinAncestor != "" && resolved.BuiltinAncestor != resolved.Name {
 		kindMeta["builtin_ancestor"] = resolved.BuiltinAncestor
 	}
+	kindMeta, err = newSessionStoredMCPMetadata(
+		cityPath,
+		cfg,
+		alias,
+		canonicalTemplate,
+		resolved.Name,
+		workDir,
+		found.Session,
+		kindMeta,
+	)
+	if err != nil {
+		fmt.Fprintf(stderr, "gc session new: %v\n", err) //nolint:errcheck // best-effort stderr
+		return 1
+	}
 	handle, err := newWorkerSessionHandleForResolvedRuntimeWithConfig(
 		cityPath,
 		store,
@@ -392,6 +420,35 @@ func cmdSessionNew(args []string, alias, title, titleHint string, noAttach bool,
 		return 1
 	}
 	return 0
+}
+
+func newSessionStoredMCPMetadata(
+	cityPath string,
+	cfg *config.City,
+	alias, template, provider, workDir, transport string,
+	metadata map[string]string,
+) (map[string]string, error) {
+	if strings.TrimSpace(transport) != "acp" {
+		return metadata, nil
+	}
+	mcpServers, err := resolvedRuntimeMCPServersWithConfig(
+		cityPath,
+		cfg,
+		alias,
+		template,
+		provider,
+		workDir,
+		transport,
+		metadata,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return session.WithStoredMCPMetadata(
+		metadata,
+		firstNonEmptyGCString(metadata[session.MCPIdentityMetadataKey], metadata["agent_name"]),
+		mcpServers,
+	)
 }
 
 // maybeAutoTitle runs the auto-title flow for a newly created session.
