@@ -226,10 +226,17 @@ func TestLocalInitializerScaffoldPreservesExistingDirectoryWhenRegisterFails(t *
 	t.Setenv("GC_HOME", t.TempDir())
 	cityPath := filepath.Join(t.TempDir(), "api-city")
 	keepPath := filepath.Join(cityPath, "keep.txt")
+	hooksKeepPath := filepath.Join(cityPath, "hooks", "custom.json")
 	if err := os.MkdirAll(cityPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(keepPath, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(hooksKeepPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hooksKeepPath, []byte(`{"custom":true}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -258,11 +265,21 @@ func TestLocalInitializerScaffoldPreservesExistingDirectoryWhenRegisterFails(t *
 	if string(data) != "keep" {
 		t.Fatalf("keep.txt = %q, want keep", string(data))
 	}
+	hooksData, hooksReadErr := os.ReadFile(hooksKeepPath)
+	if hooksReadErr != nil {
+		t.Fatalf("ReadFile(%q): %v", hooksKeepPath, hooksReadErr)
+	}
+	if string(hooksData) != `{"custom":true}` {
+		t.Fatalf("custom hook file = %q, want preserved content", string(hooksData))
+	}
 	if _, statErr := os.Stat(filepath.Join(cityPath, "city.toml")); !os.IsNotExist(statErr) {
 		t.Fatalf("city.toml stat after failed registration = %v, want not exists", statErr)
 	}
 	if _, statErr := os.Stat(filepath.Join(cityPath, ".gc")); !os.IsNotExist(statErr) {
 		t.Fatalf(".gc stat after failed registration = %v, want not exists", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(cityPath, "hooks", "claude.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("hooks/claude.json stat after failed registration = %v, want not exists", statErr)
 	}
 
 	newSupervisorRegistry = oldNewSupervisorRegistry

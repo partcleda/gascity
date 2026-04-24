@@ -15,6 +15,7 @@ package main
 // is a follow-up.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -24,6 +25,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/gastownhall/gascity/internal/api"
 	"github.com/gastownhall/gascity/internal/cityinit"
@@ -76,22 +78,28 @@ type scaffoldRollbackEntry struct {
 	linkTarget string
 }
 
-type scaffoldRollbackState struct {
+type scaffoldSnapshot struct {
 	root    string
 	entries map[string]scaffoldRollbackEntry
 }
 
-func captureScaffoldRollbackState(root string) (*scaffoldRollbackState, error) {
-	state := &scaffoldRollbackState{
+type scaffoldRollbackState struct {
+	root   string
+	before map[string]scaffoldRollbackEntry
+	after  map[string]scaffoldRollbackEntry
+}
+
+func captureScaffoldSnapshot(root string) (*scaffoldSnapshot, error) {
+	snapshot := &scaffoldSnapshot{
 		root:    root,
 		entries: make(map[string]scaffoldRollbackEntry),
 	}
 	for _, rel := range scaffoldManagedPaths() {
-		if err := state.capture(rel); err != nil {
+		if err := snapshot.capture(rel); err != nil {
 			return nil, err
 		}
 	}
-	return state, nil
+	return snapshot, nil
 }
 
 func scaffoldManagedPaths() []string {
@@ -119,7 +127,18 @@ func scaffoldManagedPaths() []string {
 	return paths
 }
 
-func (s *scaffoldRollbackState) capture(rel string) error {
+func newScaffoldRollbackState(root string) (*scaffoldRollbackState, error) {
+	snapshot, err := captureScaffoldSnapshot(root)
+	if err != nil {
+		return nil, err
+	}
+	return &scaffoldRollbackState{
+		root:   root,
+		before: snapshot.entries,
+	}, nil
+}
+
+func (s *scaffoldSnapshot) capture(rel string) error {
 	abs := filepath.Join(s.root, rel)
 	_, err := os.Lstat(abs)
 	if os.IsNotExist(err) {
@@ -155,60 +174,99 @@ func (s *scaffoldRollbackState) capture(rel string) error {
 	})
 }
 
+func (s *scaffoldRollbackState) markScaffoldState() error {
+	snapshot, err := captureScaffoldSnapshot(s.root)
+	if err != nil {
+		return err
+	}
+	s.after = snapshot.entries
+	return nil
+}
+
+func rollbackEntryEqual(a, b scaffoldRollbackEntry) bool {
+	return a.mode == b.mode && a.linkTarget == b.linkTarget && bytes.Equal(a.data, b.data)
+}
+
+func restoreRollbackEntry(abs string, entry scaffoldRollbackEntry) error {
+	switch {
+	case entry.mode.IsDir():
+		return os.MkdirAll(abs, entry.mode.Perm())
+	case entry.mode&os.ModeSymlink != 0:
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			return err
+		}
+		if err := os.Remove(abs); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return os.Symlink(entry.linkTarget, abs)
+	default:
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(abs, entry.data, entry.mode.Perm())
+	}
+}
+
 func (s *scaffoldRollbackState) restore() error {
-	current, err := captureScaffoldRollbackState(s.root)
+	current, err := captureScaffoldSnapshot(s.root)
 	if err != nil {
 		return err
 	}
 
-	var toRemove []string
-	for rel, entry := range current.entries {
-		previous, ok := s.entries[rel]
-		if !ok || entry.mode.IsDir() != previous.mode.IsDir() || (entry.mode&os.ModeSymlink != 0) != (previous.mode&os.ModeSymlink != 0) {
-			toRemove = append(toRemove, rel)
-		}
-	}
-	sort.Slice(toRemove, func(i, j int) bool {
-		return len(toRemove[i]) > len(toRemove[j])
-	})
-
 	var errs []error
-	for _, rel := range toRemove {
-		if err := os.Remove(filepath.Join(s.root, rel)); err != nil && !os.IsNotExist(err) {
-			errs = append(errs, fmt.Errorf("remove %q: %w", filepath.Join(s.root, rel), err))
+	var createdDirs []string
+	for rel, after := range s.after {
+		before, hadBefore := s.before[rel]
+		currentEntry, existsNow := current.entries[rel]
+		switch {
+		case !hadBefore:
+			if after.mode.IsDir() {
+				createdDirs = append(createdDirs, rel)
+				continue
+			}
+			if existsNow && rollbackEntryEqual(currentEntry, after) {
+				if err := os.Remove(filepath.Join(s.root, rel)); err != nil && !os.IsNotExist(err) {
+					errs = append(errs, fmt.Errorf("remove %q: %w", filepath.Join(s.root, rel), err))
+				}
+			}
+		case rollbackEntryEqual(before, after):
+			continue
+		default:
+			if after.mode.IsDir() {
+				continue
+			}
+			if existsNow && rollbackEntryEqual(currentEntry, after) {
+				if err := restoreRollbackEntry(filepath.Join(s.root, rel), before); err != nil {
+					errs = append(errs, fmt.Errorf("restore %q: %w", filepath.Join(s.root, rel), err))
+				}
+			}
 		}
 	}
 
-	var rels []string
-	for rel := range s.entries {
-		rels = append(rels, rel)
+	for rel, before := range s.before {
+		if _, hadAfter := s.after[rel]; hadAfter {
+			continue
+		}
+		if before.mode.IsDir() {
+			continue
+		}
+		if _, existsNow := current.entries[rel]; existsNow {
+			continue
+		}
+		if err := restoreRollbackEntry(filepath.Join(s.root, rel), before); err != nil {
+			errs = append(errs, fmt.Errorf("restore %q: %w", filepath.Join(s.root, rel), err))
+		}
 	}
-	sort.Strings(rels)
 
-	for _, rel := range rels {
-		entry := s.entries[rel]
-		abs := filepath.Join(s.root, rel)
-		switch {
-		case entry.mode.IsDir():
-			if err := os.MkdirAll(abs, entry.mode.Perm()); err != nil {
-				errs = append(errs, fmt.Errorf("restore dir %q: %w", abs, err))
-			}
-		case entry.mode&os.ModeSymlink != 0:
-			if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-				errs = append(errs, fmt.Errorf("restore parent dir for %q: %w", abs, err))
+	sort.Slice(createdDirs, func(i, j int) bool {
+		return len(createdDirs[i]) > len(createdDirs[j])
+	})
+	for _, rel := range createdDirs {
+		if err := os.Remove(filepath.Join(s.root, rel)); err != nil && !os.IsNotExist(err) {
+			if errors.Is(err, syscall.ENOTEMPTY) {
 				continue
 			}
-			if err := os.Symlink(entry.linkTarget, abs); err != nil && !os.IsExist(err) {
-				errs = append(errs, fmt.Errorf("restore symlink %q: %w", abs, err))
-			}
-		default:
-			if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-				errs = append(errs, fmt.Errorf("restore parent dir for %q: %w", abs, err))
-				continue
-			}
-			if err := os.WriteFile(abs, entry.data, entry.mode.Perm()); err != nil {
-				errs = append(errs, fmt.Errorf("restore file %q: %w", abs, err))
-			}
+			errs = append(errs, fmt.Errorf("remove %q: %w", filepath.Join(s.root, rel), err))
 		}
 	}
 
@@ -234,7 +292,7 @@ func (localInitializer) Scaffold(_ context.Context, req cityinit.InitRequest) (*
 	var rollbackState *scaffoldRollbackState
 	if _, err := os.Stat(dir); err == nil {
 		dirExisted = true
-		rollbackState, err = captureScaffoldRollbackState(dir)
+		rollbackState, err = newScaffoldRollbackState(dir)
 		if err != nil {
 			return nil, fmt.Errorf("snapshot rollback state for %q: %w", dir, err)
 		}
@@ -259,6 +317,14 @@ func (localInitializer) Scaffold(_ context.Context, req cityinit.InitRequest) (*
 		return nil, cityinit.ErrAlreadyInitialized
 	}
 	if code := doInit(fsys.OSFS{}, dir, wiz, req.NameOverride, io.Discard, io.Discard); code != 0 {
+		if dirExisted && rollbackState != nil {
+			if markErr := rollbackState.markScaffoldState(); markErr != nil {
+				return nil, errors.Join(fmt.Errorf("scaffold failed (exit %d)", code), fmt.Errorf("snapshot scaffold state for rollback: %w", markErr))
+			}
+			if cleanupErr := rollbackState.restore(); cleanupErr != nil {
+				return nil, errors.Join(fmt.Errorf("scaffold failed (exit %d)", code), fmt.Errorf("restoring existing directory after scaffold failure: %w", cleanupErr))
+			}
+		}
 		if code == initExitAlreadyInitialized {
 			return nil, cityinit.ErrAlreadyInitialized
 		}
@@ -287,6 +353,11 @@ func (localInitializer) Scaffold(_ context.Context, req cityinit.InitRequest) (*
 	// only after registration succeeds so synchronous failures do not
 	// leak a "created" event for a city the supervisor never adopted.
 	ensureCityEventLog(dir)
+	if dirExisted && rollbackState != nil {
+		if err := rollbackState.markScaffoldState(); err != nil {
+			return nil, fmt.Errorf("snapshot scaffold state for %q: %w", dir, err)
+		}
+	}
 
 	// Register the city with the supervisor without blocking on the
 	// reconciler's tick. The standard registerCityWithSupervisor
