@@ -131,13 +131,15 @@ func (localInitializer) Scaffold(_ context.Context, req cityinit.InitRequest) (*
 	// reconciler's tick. The standard registerCityWithSupervisor
 	// waits for prepareCityForSupervisor to complete, which is the
 	// very blocking behavior the async POST /v0/city contract
-	// exists to avoid. registerCityForAPI fires a reload signal at
-	// the supervisor and returns immediately; the reconciler picks
-	// up the city on its own schedule.
+	// exists to avoid.
 	if err := registerCityForAPI(dir, req.NameOverride); err != nil {
+		if cleanupErr := os.RemoveAll(dir); cleanupErr != nil {
+			return nil, errors.Join(fmt.Errorf("register with supervisor: %w", err), fmt.Errorf("cleaning scaffold after failed registration: %w", cleanupErr))
+		}
 		return nil, fmt.Errorf("register with supervisor: %w", err)
 	}
 	recordCityEvent(dir, events.CityCreated, cityName, api.CityCreatedPayload{Name: cityName, Path: dir})
+	reloadSupervisorNoWaitHook()
 
 	return &cityinit.InitResult{
 		CityName:     cityName,

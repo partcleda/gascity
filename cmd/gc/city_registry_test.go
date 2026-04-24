@@ -286,6 +286,29 @@ func TestCityRegistryTransientCityEventProvidersIncludesRegisteredAndPendingCiti
 	}
 }
 
+func TestCityRegistryTransientCityEventProvidersSkipMissingLogs(t *testing.T) {
+	t.Setenv("GC_HOME", t.TempDir())
+
+	missingPath := filepath.Join(t.TempDir(), "missing-city")
+	if err := os.MkdirAll(missingPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	regFile := supervisor.NewRegistry(supervisor.RegistryPath())
+	if err := regFile.Register(missingPath, "missing-city"); err != nil {
+		t.Fatal(err)
+	}
+
+	reg := newCityRegistry()
+	providers := reg.TransientCityEventProviders()
+	if _, ok := providers["missing-city"]; ok {
+		t.Fatalf("missing-city should be skipped when events.jsonl is absent: %#v", providers)
+	}
+	if _, err := os.Stat(filepath.Join(missingPath, ".gc", "events.jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("events.jsonl stat = %v, want not exists", err)
+	}
+}
+
 func writeCityEventLog(t *testing.T, name string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name)

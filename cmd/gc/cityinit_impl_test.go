@@ -107,6 +107,18 @@ func TestValidateInitRequest(t *testing.T) {
 func TestLocalInitializerScaffoldCreatesCityRegistersAndEmitsCreated(t *testing.T) {
 	t.Setenv("GC_HOME", t.TempDir())
 	cityPath := filepath.Join(t.TempDir(), "api-city")
+	reloadSawCreated := 0
+
+	oldReloadSupervisorNoWaitHook := reloadSupervisorNoWaitHook
+	reloadSupervisorNoWaitHook = func() {
+		evts, err := events.ReadFiltered(filepath.Join(cityPath, ".gc", "events.jsonl"), events.Filter{Type: events.CityCreated})
+		if err == nil {
+			reloadSawCreated = len(evts)
+		}
+	}
+	t.Cleanup(func() {
+		reloadSupervisorNoWaitHook = oldReloadSupervisorNoWaitHook
+	})
 
 	result, err := localInitializer{}.Scaffold(context.Background(), cityinit.InitRequest{
 		Dir:              cityPath,
@@ -152,6 +164,9 @@ func TestLocalInitializerScaffoldCreatesCityRegistersAndEmitsCreated(t *testing.
 		t.Fatalf("payload name = %q, want api-city", payload.Name)
 	}
 	assertSameTestPath(t, payload.Path, cityPath)
+	if reloadSawCreated != 1 {
+		t.Fatalf("reload saw %d city.created events, want 1 before wake", reloadSawCreated)
+	}
 
 	_, err = localInitializer{}.Scaffold(context.Background(), cityinit.InitRequest{
 		Dir:      cityPath,
@@ -182,6 +197,9 @@ func TestLocalInitializerScaffoldDoesNotEmitCreatedWhenRegisterFails(t *testing.
 	})
 	if err == nil || !strings.Contains(err.Error(), "register with supervisor") {
 		t.Fatalf("Scaffold error = %v, want register with supervisor failure", err)
+	}
+	if _, statErr := os.Stat(cityPath); !os.IsNotExist(statErr) {
+		t.Fatalf("cityPath stat after failed registration = %v, want not exists", statErr)
 	}
 
 	evts, readErr := events.ReadFiltered(filepath.Join(cityPath, ".gc", "events.jsonl"), events.Filter{Type: events.CityCreated})

@@ -28,6 +28,7 @@ var (
 var (
 	registerCityWithSupervisorTestHook func(cityPath, commandName string, stdout, stderr io.Writer) (bool, int)
 	supervisorCityErrorHook            = supervisorCityError
+	reloadSupervisorNoWaitHook         = reloadSupervisorNoWait
 )
 
 type supervisorRegistry interface {
@@ -252,17 +253,11 @@ func registerCityWithSupervisorNamed(cityPath, nameOverride string, stdout, stde
 	return 0
 }
 
-// registerCityForAPI is the fire-and-forget variant of
-// registerCityWithSupervisor for the async POST /v0/city path.
-// Writes the city to the supervisor registry and signals the
-// reconciler to wake up, but does NOT wait for the reconciler to
-// finish processing the city — if we waited, POST would block on
-// the full prepareCityForSupervisor (pack materialization, beads
-// lifecycle, etc.) which is the exact behavior the async contract
-// was designed to avoid. The reconciler picks up the city on its
-// next tick; subscribers to /v0/events/stream see city.created
-// only after registration succeeds, then city.ready or
-// city.init_failed when the reconciler completes.
+// registerCityForAPI is the registry-write portion of async
+// POST /v0/city. It records the city in the supervisor registry but
+// intentionally does NOT wait for readiness. Callers are responsible
+// for emitting any lifecycle events they need before waking the
+// reconciler, so event ordering stays deterministic.
 func registerCityForAPI(cityPath, nameOverride string) error {
 	cityPath = normalizePathForCompare(cityPath)
 	name, err := registeredCityName(cityPath, nameOverride)
@@ -273,10 +268,6 @@ func registerCityForAPI(cityPath, nameOverride string) error {
 	if err := reg.Register(cityPath, name); err != nil {
 		return err
 	}
-	// Best-effort wake: if the supervisor isn't reachable, fall
-	// through; the periodic ticker will pick up the registry entry
-	// on its next interval.
-	reloadSupervisorNoWait()
 	return nil
 }
 

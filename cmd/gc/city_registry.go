@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"io"
+	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -238,6 +239,12 @@ func (r *cityRegistry) TransientCityEventProviders() map[string]events.Provider 
 	out := make(map[string]events.Provider, len(paths))
 	for name, path := range paths {
 		evPath := filepath.Join(path, ".gc", "events.jsonl")
+		if _, err := os.Stat(evPath); err != nil {
+			continue
+		}
+		if _, err := events.ReadLatestSeq(evPath); err != nil {
+			continue
+		}
 		out[name] = transientCityEventProvider{path: evPath}
 	}
 	return out
