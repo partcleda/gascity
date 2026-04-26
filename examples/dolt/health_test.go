@@ -693,7 +693,7 @@ func writeExecutable(t *testing.T, path, contents string) {
 // Regression guard for the bug where deacon patrol killed rig-local
 // Dolt servers because the zombie scan treated every non-city-server
 // dolt sql-server PID as a zombie.
-func TestHealthScriptZombieScanExcludesRigLocalServers(t *testing.T) {
+func runHealthScriptZombieScanExcludesRigLocalServers(t *testing.T, rigConfig string) {
 	cityPath := t.TempDir()
 	fakeBin := t.TempDir()
 
@@ -723,7 +723,7 @@ func TestHealthScriptZombieScanExcludesRigLocalServers(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(rigBeads, "config.yaml"),
-		[]byte("dolt.port: "+rigPort+"\n"), 0o644); err != nil {
+		[]byte(rigConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -798,6 +798,28 @@ exit 1
 	// The true zombie PID (424203) must appear in zombie_pids.
 	if !strings.Contains(output, zombiePID) {
 		t.Errorf("true zombie PID %s should be in zombie_pids; got:\n%s", zombiePID, output)
+	}
+}
+
+func TestHealthScriptZombieScanExcludesRigLocalServers(t *testing.T) {
+	tests := []struct {
+		name      string
+		rigConfig string
+	}{
+		{
+			name:      "bare port",
+			rigConfig: "dolt.port: 19902\n",
+		},
+		{
+			name:      "quoted port",
+			rigConfig: "dolt.port: \"19902\"\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			runHealthScriptZombieScanExcludesRigLocalServers(t, tc.rigConfig)
+		})
 	}
 }
 
