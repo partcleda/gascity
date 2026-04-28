@@ -113,9 +113,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    env:
-      HAS_HOMEBREW_APP: ${{ secrets.HOMEBREW_TAP_APP_ID != '' && secrets.HOMEBREW_TAP_APP_PRIVATE_KEY != '' }}
-      HAS_HOMEBREW_PAT: ${{ secrets.HOMEBREW_TAP_TOKEN != '' }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -124,9 +121,18 @@ jobs:
         id: version
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
 
+      - name: Verify Homebrew tap app credentials
+        env:
+          HOMEBREW_TAP_APP_ID: ${{ secrets.HOMEBREW_TAP_APP_ID }}
+          HOMEBREW_TAP_APP_PRIVATE_KEY: ${{ secrets.HOMEBREW_TAP_APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$HOMEBREW_TAP_APP_ID" ] || [ -z "$HOMEBREW_TAP_APP_PRIVATE_KEY" ]; then
+            echo "ERROR: HOMEBREW_TAP_APP_ID and HOMEBREW_TAP_APP_PRIVATE_KEY are required for tap publishing." >&2
+            exit 1
+          fi
+
       - name: Mint Homebrew tap token
         id: homebrew-token
-        if: ${{ env.HAS_HOMEBREW_APP == 'true' }}
         uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3
         with:
           app-id: ${{ secrets.HOMEBREW_TAP_APP_ID }}
@@ -136,10 +142,9 @@ jobs:
           permission-contents: write
 
       - name: Generate and push Homebrew formula
-        if: ${{ env.HAS_HOMEBREW_APP == 'true' || env.HAS_HOMEBREW_PAT == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          HOMEBREW_TAP_TOKEN: ${{ steps.homebrew-token.outputs.token || secrets.HOMEBREW_TAP_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ steps.homebrew-token.outputs.token }}
         run: |
           version="${{ steps.version.outputs.version }}"
           tag="v${version}"
@@ -236,7 +241,3 @@ jobs:
           git add Formula/gascity.rb
           git commit -m "gascity ${version}" || echo "No changes to commit"
           git push
-
-      - name: Skip Homebrew formula update
-        if: ${{ env.HAS_HOMEBREW_APP != 'true' && env.HAS_HOMEBREW_PAT != 'true' }}
-        run: echo "No Homebrew tap credential configured; skipping tap update."
