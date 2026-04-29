@@ -515,7 +515,18 @@ fi
 ```
 If this command fails or prints empty output: STOP. Debug and retry. Do NOT continue.
 
-**4. Record PR metadata and close the work bead:**
+**4. Enable auto-merge on the pull request:**
+```bash
+gh pr merge "$PR_REF" --auto -m 2>&1 || true
+```
+Idempotent — `--auto` returns 'already queued' or 'already enabled' on repeat
+calls. If the PR is currently mergeable (all required checks passed), it is
+added directly to the GitHub merge queue; otherwise auto-merge is enabled and
+the PR enters the queue when checks pass. This is best-effort — a transient
+failure here does not block the bead handoff. The intent is that no campaign
+PR sits CI-green-but-unqueued waiting for a human to push the merge button.
+
+**5. Record PR metadata and close the work bead:**
 ```bash
 gc bd update $WORK \
   --set-metadata merge_result=pull_request \
@@ -525,7 +536,7 @@ gc bd update $WORK \
 gc bd close $WORK --reason "Pull request ready: $PR_URL"
 ```
 
-**5. Cleanup:**
+**6. Cleanup:**
 ```bash
 git checkout "$TARGET"
 git branch -d temp
