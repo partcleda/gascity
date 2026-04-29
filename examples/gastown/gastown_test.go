@@ -259,6 +259,24 @@ func TestRefineryFormulaRespectsExistingPRMetadata(t *testing.T) {
 	)
 }
 
+func TestRefineryFormulaEnablesAutoMergeAfterPRValidation(t *testing.T) {
+	dir := exampleDir()
+	path := filepath.Join(dir, "packs", "gastown", "formulas", "mol-refinery-patrol.toml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading refinery formula: %v", err)
+	}
+	body := string(data)
+	if !strings.Contains(body, `gh pr merge "$PR_REF" --auto`) {
+		t.Errorf("refinery formula missing auto-merge enablement after PR validation")
+	}
+	assertContainsInOrder(t, body,
+		`PR_HEAD_REPO=$(printf '%s\n' "$PR_INFO" | jq -r '.headRepositoryOwner.login + "/" + .headRepository.name')`,
+		`gh pr merge "$PR_REF" --auto`,
+		`gc bd close $WORK --reason "Pull request ready: $PR_URL"`,
+	)
+}
+
 func TestWorktreeSetupKeepsIgnoresLocal(t *testing.T) {
 	tmp := t.TempDir()
 	repo := filepath.Join(tmp, "repo")
