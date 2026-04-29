@@ -40,8 +40,13 @@ The exact versions CI pins are in [`deps.env`](https://github.com/gastownhall/ga
 brew install gastownhall/gascity/gascity
 ```
 
-This taps the `gastownhall/gascity` formula, builds or fetches the `gc` binary,
-and installs all six runtime dependencies (tmux, jq, git, dolt, flock, beads).
+This taps the `gastownhall/gascity` formula, downloads the matching `gc`
+release asset, and installs all six runtime dependencies (tmux, jq, git, dolt,
+flock, beads).
+
+Once Gas City is accepted into homebrew-core, the normal install path will be
+`brew install gascity`; the `gastownhall/gascity` tap remains available for
+emergency updates.
 
 Verify the installation:
 
@@ -98,7 +103,7 @@ Release tarballs are published for every tagged version. Supported platforms:
 
 ```bash
 # Set the version you want (check https://github.com/gastownhall/gascity/releases)
-VERSION=0.13.3
+VERSION=1.0.0
 
 # Detect platform
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -117,6 +122,39 @@ sudo install -m 755 gc /usr/local/bin/gc
 
 # Verify
 gc version
+```
+
+### Verify release artifacts
+
+Homebrew verifies release checksums from the formula automatically. For direct
+downloads, verify the archive before installing it:
+
+```bash
+ARCHIVE="gascity_${VERSION}_${OS}_${ARCH}.tar.gz"
+CHECKSUMS="gascity_${VERSION}_checksums.txt"
+
+curl -fsSLO "https://github.com/gastownhall/gascity/releases/download/v${VERSION}/${CHECKSUMS}"
+grep "  ${ARCHIVE}$" "${CHECKSUMS}" > "${ARCHIVE}.sha256"
+
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256sum -c "${ARCHIVE}.sha256"
+else
+  shasum -a 256 -c "${ARCHIVE}.sha256"
+fi
+```
+
+Release archives are also published with GitHub artifact attestations. If you
+have the GitHub CLI installed, verify the downloaded archive against the
+`gastownhall/gascity` repository:
+
+```bash
+gh attestation verify "${ARCHIVE}" --repo gastownhall/gascity
+```
+
+Each release also includes an SPDX SBOM asset:
+
+```bash
+curl -fsSLO "https://github.com/gastownhall/gascity/releases/download/v${VERSION}/gascity-v${VERSION}.spdx.json"
 ```
 
 ### Upgrading a direct-download install

@@ -19,6 +19,7 @@ import (
 	"github.com/gastownhall/gascity/internal/config"
 	"github.com/gastownhall/gascity/internal/events"
 	"github.com/gastownhall/gascity/internal/runtime"
+	sessionauto "github.com/gastownhall/gascity/internal/runtime/auto"
 	"github.com/gastownhall/gascity/internal/session"
 	"github.com/gastownhall/gascity/internal/sessionlog"
 	"github.com/gastownhall/gascity/internal/worker"
@@ -39,6 +40,28 @@ func createTestSession(t *testing.T, store beads.Store, sp *runtime.Fake, title 
 		t.Fatalf("create session: %v", err)
 	}
 	return info
+}
+
+type cachedOnlyListStoreForSessionTest struct {
+	*beads.MemStore
+	blockList bool
+	listCalls int
+}
+
+func (s *cachedOnlyListStoreForSessionTest) List(query beads.ListQuery) ([]beads.Bead, error) {
+	if s.blockList {
+		s.listCalls++
+		return nil, errors.New("backing List should not be used")
+	}
+	return s.MemStore.List(query)
+}
+
+func (s *cachedOnlyListStoreForSessionTest) CachedList(query beads.ListQuery) ([]beads.Bead, bool) {
+	rows, err := s.MemStore.List(query)
+	if err != nil {
+		return nil, false
+	}
+	return rows, true
 }
 
 func writeGeminiHistoryFixtureForAPI(t *testing.T, path, sessionID string, messages ...string) {
@@ -74,6 +97,14 @@ func (p *failNudgeProvider) Nudge(name string, content []runtime.ContentBlock) e
 		return p.err
 	}
 	return nil
+}
+
+type transportCapableProvider struct {
+	*runtime.Fake
+}
+
+func (p *transportCapableProvider) SupportsTransport(transport string) bool {
+	return transport == "acp"
 }
 
 type stateWithSessionProvider struct {
@@ -395,13 +426,180 @@ func TestHandleSessionListActiveBeadUsesCachedLookup(t *testing.T) {
 	resp := sessionResponse{}
 	srv.enrichSessionResponse(&resp, info, fs.Config(), sessionResponseCapabilityHandle{
 		state: worker.State{Phase: worker.PhaseReady},
-	}, false, false)
+	}, false, false, false)
 
 	if !resp.Running {
 		t.Fatal("Running = false, want true")
 	}
 	if got := resp.ActiveBead; got != work.ID {
 		t.Fatalf("active_bead = %q, want cached %q", got, work.ID)
+	}
+}
+
+func TestHandleSessionListUsesCachedSessionBeadsWhenAvailable(t *testing.T) {
+	fs := newSessionFakeState(t)
+	store := &cachedOnlyListStoreForSessionTest{MemStore: beads.NewMemStore()}
+	fs.cityBeadStore = store
+	srv := New(fs)
+	h := newTestCityHandlerWith(t, fs, srv)
+
+	info := createTestSession(t, fs.cityBeadStore, fs.sp, "My Session")
+	store.blockList = true
+
+	req := httptest.NewRequest("GET", cityURL(fs, "/sessions"), nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var resp struct {
+		Items []sessionResponse `json:"items"`
+		Total int               `json:"total"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Total != 1 || len(resp.Items) != 1 || resp.Items[0].ID != info.ID {
+		t.Fatalf("response = %#v, want one session %s", resp, info.ID)
+	}
+	if store.listCalls != 0 {
+		t.Fatalf("backing List calls = %d, want 0", store.listCalls)
+	}
+}
+
+func TestHandleSessionListSkipsWorkdirOnlyCodexTranscriptDiscovery(t *testing.T) {
+	fs := newSessionFakeState(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".codex", "sessions"), 0o755); err != nil {
+		t.Fatalf("MkdirAll default codex sessions: %v", err)
+	}
+	searchBase := t.TempDir()
+	srv := New(fs)
+	srv.sessionLogSearchPaths = []string{searchBase}
+	h := newTestCityHandlerWith(t, fs, srv)
+
+	workDir := t.TempDir()
+	mgr := session.NewManager(fs.cityBeadStore, fs.sp)
+	info, err := mgr.Create(context.Background(), "myrig/worker", "Codex Chat", "codex", workDir, "codex-max", nil, session.ProviderResume{}, runtime.Config{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if info.SessionKey != "" {
+		t.Fatalf("SessionKey = %q, want empty for codex provider without SessionIDFlag", info.SessionKey)
+	}
+
+	codexDir := filepath.Join(searchBase, "2026", "04", "18")
+	if err := os.MkdirAll(codexDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	codexPayload := strings.Join([]string{
+		fmt.Sprintf(`{"type":"session_meta","payload":{"cwd":%q}}`, workDir),
+		`{"type":"assistant","message":{"model":"gpt-5.5","usage":{"input_tokens":1000}}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(codexDir, "session.jsonl"), []byte(codexPayload), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", cityURL(fs, "/sessions?template=myrig%2Fworker"), nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var resp struct {
+		Items []sessionResponse `json:"items"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(resp.Items) != 1 || resp.Items[0].ID != info.ID {
+		t.Fatalf("items = %#v, want session %s", resp.Items, info.ID)
+	}
+	if resp.Items[0].Model != "" || resp.Items[0].ContextPct != nil {
+		t.Fatalf("session list used workdir-only Codex transcript discovery: model=%q context=%v", resp.Items[0].Model, resp.Items[0].ContextPct)
+	}
+}
+
+func TestHandleSessionGetAllowsWorkdirOnlyCodexTranscriptDiscovery(t *testing.T) {
+	fs := newSessionFakeState(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, ".codex", "sessions"), 0o755); err != nil {
+		t.Fatalf("MkdirAll default codex sessions: %v", err)
+	}
+	searchBase := t.TempDir()
+	srv := New(fs)
+	srv.sessionLogSearchPaths = []string{searchBase}
+	h := newTestCityHandlerWith(t, fs, srv)
+
+	workDir := t.TempDir()
+	mgr := session.NewManager(fs.cityBeadStore, fs.sp)
+	info, err := mgr.Create(context.Background(), "myrig/worker", "Codex Chat", "codex", workDir, "codex-max", nil, session.ProviderResume{}, runtime.Config{})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	codexDir := filepath.Join(searchBase, "2026", "04", "18")
+	if err := os.MkdirAll(codexDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	codexPayload := strings.Join([]string{
+		fmt.Sprintf(`{"type":"session_meta","payload":{"cwd":%q}}`, workDir),
+		`{"type":"assistant","message":{"model":"gpt-5.5","usage":{"input_tokens":1000}}}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(codexDir, "session.jsonl"), []byte(codexPayload), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", cityURL(fs, "/session/")+info.ID, nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var resp sessionResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.ID != info.ID {
+		t.Fatalf("ID = %q, want %q", resp.ID, info.ID)
+	}
+	if resp.Model != "gpt-5.5" {
+		t.Fatalf("model = %q, want gpt-5.5", resp.Model)
+	}
+}
+
+func TestHandleSessionListActiveBeadUsesCachedListWhenAvailable(t *testing.T) {
+	fs := newSessionFakeState(t)
+	store := &cachedOnlyListStoreForSessionTest{MemStore: beads.NewMemStore(), blockList: true}
+	fs.stores["myrig"] = store
+	srv := New(fs)
+
+	info := createTestSession(t, fs.cityBeadStore, fs.sp, "My Session")
+	work, err := store.Create(beads.Bead{Title: "active work"})
+	if err != nil {
+		t.Fatalf("Create(work): %v", err)
+	}
+	status := "in_progress"
+	assignee := info.ID
+	if err := store.Update(work.ID, beads.UpdateOpts{Status: &status, Assignee: &assignee}); err != nil {
+		t.Fatalf("Update(work): %v", err)
+	}
+
+	resp := sessionResponse{}
+	srv.enrichSessionResponse(&resp, info, fs.Config(), sessionResponseCapabilityHandle{
+		state: worker.State{Phase: worker.PhaseReady},
+	}, false, false, false)
+
+	if got := resp.ActiveBead; got != work.ID {
+		t.Fatalf("active_bead = %q, want cached %q", got, work.ID)
+	}
+	if store.listCalls != 0 {
+		t.Fatalf("backing List calls = %d, want 0", store.listCalls)
 	}
 }
 
@@ -433,7 +631,7 @@ func TestHandleSessionGetActiveBeadUsesLiveLookup(t *testing.T) {
 	resp := sessionResponse{}
 	srv.enrichSessionResponse(&resp, info, fs.Config(), sessionResponseCapabilityHandle{
 		state: worker.State{Phase: worker.PhaseReady},
-	}, false, true)
+	}, false, true, true)
 
 	if !resp.Running {
 		t.Fatal("Running = false, want true")
@@ -1125,6 +1323,16 @@ func TestHandleSessionCreate(t *testing.T) {
 	if resp.Title != "myrig/worker" {
 		t.Errorf("Title = %q, want default %q", resp.Title, "myrig/worker")
 	}
+	bead, err := fs.cityBeadStore.Get(resp.ID)
+	if err != nil {
+		t.Fatalf("Get(%s): %v", resp.ID, err)
+	}
+	if got := bead.Metadata[session.MCPIdentityMetadataKey]; got != "" {
+		t.Fatalf("mcp_identity = %q, want empty for non-ACP agent session", got)
+	}
+	if got := bead.Metadata[session.MCPServersSnapshotMetadataKey]; got != "" {
+		t.Fatalf("mcp_servers_snapshot = %q, want empty for non-ACP agent session", got)
+	}
 	// Agent sessions are always created async — not running until the
 	// reconciler starts the process.
 	if resp.Running {
@@ -1132,6 +1340,242 @@ func TestHandleSessionCreate(t *testing.T) {
 	}
 	if resp.DisplayName != "Test Agent" {
 		t.Errorf("DisplayName = %q, want %q", resp.DisplayName, "Test Agent")
+	}
+}
+
+func TestHandleSessionCreateUsesACPTransportCommandForAgentTemplate(t *testing.T) {
+	supportsACP := true
+	fs := newSessionFakeState(t)
+	fs.cfg.Agents[0].Provider = "opencode"
+	fs.cfg.Agents[0].Session = "acp"
+	fs.cfg.Providers["opencode"] = config.ProviderSpec{
+		DisplayName: "OpenCode",
+		Command:     "/bin/echo",
+		PathCheck:   "true",
+		SupportsACP: &supportsACP,
+		ACPCommand:  "/bin/echo",
+		ACPArgs:     []string{"acp"},
+	}
+	state := &stateWithSessionProvider{
+		fakeState: fs,
+		provider:  &transportCapableProvider{Fake: runtime.NewFake()},
+	}
+	srv := New(state)
+	h := newTestCityHandlerWith(t, state, srv)
+
+	req := newPostRequest(cityURL(fs, "/sessions"), strings.NewReader(`{"kind":"agent","name":"myrig/worker"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusAccepted, rec.Body.String())
+	}
+
+	var resp sessionResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	bead, err := state.cityBeadStore.Get(resp.ID)
+	if err != nil {
+		t.Fatalf("Get(%s): %v", resp.ID, err)
+	}
+	if got, want := bead.Metadata["command"], "/bin/echo acp"; got != want {
+		t.Fatalf("command metadata = %q, want %q", got, want)
+	}
+	if got, want := bead.Metadata["transport"], "acp"; got != want {
+		t.Fatalf("transport metadata = %q, want %q", got, want)
+	}
+}
+
+func TestHumaHandleSessionCreateUsesACPTransportCommandForAgentTemplate(t *testing.T) {
+	supportsACP := true
+	fs := newSessionFakeState(t)
+	fs.cfg.Agents[0].Provider = "opencode"
+	fs.cfg.Agents[0].Session = "acp"
+	fs.cfg.Providers["opencode"] = config.ProviderSpec{
+		DisplayName: "OpenCode",
+		Command:     "/bin/echo",
+		PathCheck:   "true",
+		SupportsACP: &supportsACP,
+		ACPCommand:  "/bin/echo",
+		ACPArgs:     []string{"acp"},
+	}
+	state := &stateWithSessionProvider{
+		fakeState: fs,
+		provider:  &transportCapableProvider{Fake: runtime.NewFake()},
+	}
+	srv := New(state)
+
+	out, err := srv.humaHandleSessionCreate(context.Background(), &SessionCreateInput{
+		Body: sessionCreateBody{
+			Kind: "agent",
+			Name: "myrig/worker",
+		},
+	})
+	if err != nil {
+		t.Fatalf("humaHandleSessionCreate: %v", err)
+	}
+	if got, want := out.Status, http.StatusAccepted; got != want {
+		t.Fatalf("status = %d, want %d", got, want)
+	}
+	bead, err := state.cityBeadStore.Get(out.Body.ID)
+	if err != nil {
+		t.Fatalf("Get(%s): %v", out.Body.ID, err)
+	}
+	if got, want := bead.Metadata["command"], "/bin/echo acp"; got != want {
+		t.Fatalf("command metadata = %q, want %q", got, want)
+	}
+	if got, want := bead.Metadata["transport"], "acp"; got != want {
+		t.Fatalf("transport metadata = %q, want %q", got, want)
+	}
+}
+
+func TestHandleSessionCreateRejectsACPAgentWithoutACPRouting(t *testing.T) {
+	supportsACP := true
+	fs := newSessionFakeState(t)
+	fs.cfg.Agents[0].Provider = "opencode"
+	fs.cfg.Agents[0].Session = "acp"
+	fs.cfg.Providers["opencode"] = config.ProviderSpec{
+		DisplayName: "OpenCode",
+		Command:     "/bin/echo",
+		PathCheck:   "true",
+		SupportsACP: &supportsACP,
+		ACPCommand:  "/bin/echo",
+		ACPArgs:     []string{"acp"},
+	}
+	srv := New(fs)
+	h := newTestCityHandlerWith(t, fs, srv)
+
+	req := newPostRequest(cityURL(fs, "/sessions"), strings.NewReader(`{"kind":"agent","name":"myrig/worker"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "requires ACP transport") {
+		t.Fatalf("body = %q, want ACP transport error", rec.Body.String())
+	}
+}
+
+func TestHumaHandleSessionCreateRejectsACPAgentWithoutACPRouting(t *testing.T) {
+	supportsACP := true
+	fs := newSessionFakeState(t)
+	fs.cfg.Agents[0].Provider = "opencode"
+	fs.cfg.Agents[0].Session = "acp"
+	fs.cfg.Providers["opencode"] = config.ProviderSpec{
+		DisplayName: "OpenCode",
+		Command:     "/bin/echo",
+		PathCheck:   "true",
+		SupportsACP: &supportsACP,
+		ACPCommand:  "/bin/echo",
+		ACPArgs:     []string{"acp"},
+	}
+	srv := New(fs)
+
+	if _, err := srv.humaHandleSessionCreate(context.Background(), &SessionCreateInput{
+		Body: sessionCreateBody{
+			Kind: "agent",
+			Name: "myrig/worker",
+		},
+	}); err == nil {
+		t.Fatal("humaHandleSessionCreate() error = nil, want ACP routing error")
+	} else if !strings.Contains(err.Error(), "requires ACP transport") {
+		t.Fatalf("humaHandleSessionCreate() error = %v, want ACP transport error", err)
+	}
+}
+
+func TestHandleSessionCreateRejectsACPAgentWhenProviderLacksACP(t *testing.T) {
+	fs := newSessionFakeState(t)
+	fs.cfg.Agents[0].Provider = "custom"
+	fs.cfg.Agents[0].Session = "acp"
+	fs.cfg.Providers["custom"] = config.ProviderSpec{
+		DisplayName: "Custom",
+		Command:     "/bin/echo",
+		PathCheck:   "true",
+	}
+	state := &stateWithSessionProvider{
+		fakeState: fs,
+		provider:  &transportCapableProvider{Fake: runtime.NewFake()},
+	}
+	srv := New(state)
+	h := newTestCityHandlerWith(t, state, srv)
+
+	req := newPostRequest(cityURL(fs, "/sessions"), strings.NewReader(`{"kind":"agent","name":"myrig/worker"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "does not support ACP transport") {
+		t.Fatalf("body = %q, want provider ACP support error", rec.Body.String())
+	}
+}
+
+func TestHumaHandleSessionCreatePropagatesMCPResolutionErrorForACPAgent(t *testing.T) {
+	supportsACP := true
+	fs := newSessionFakeState(t)
+	fs.cfg.Agents[0].Provider = "opencode"
+	fs.cfg.Agents[0].Session = "acp"
+	fs.cfg.Providers["opencode"] = config.ProviderSpec{
+		DisplayName: "OpenCode",
+		Command:     "/bin/echo",
+		PathCheck:   "true",
+		SupportsACP: &supportsACP,
+		ACPCommand:  "/bin/echo",
+		ACPArgs:     []string{"acp"},
+	}
+	fs.cfg.PackMCPDir = filepath.Join(fs.cityPath, "mcp")
+	if err := os.MkdirAll(fs.cfg.PackMCPDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(mcp): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(fs.cfg.PackMCPDir, "filesystem.toml"), []byte(`
+name = "filesystem"
+command = [broken
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(mcp): %v", err)
+	}
+	state := &stateWithSessionProvider{
+		fakeState: fs,
+		provider:  &transportCapableProvider{Fake: runtime.NewFake()},
+	}
+	srv := New(state)
+
+	if _, err := srv.humaHandleSessionCreate(context.Background(), &SessionCreateInput{
+		Body: sessionCreateBody{
+			Kind: "agent",
+			Name: "myrig/worker",
+		},
+	}); err == nil {
+		t.Fatal("humaHandleSessionCreate() error = nil, want MCP resolution error")
+	} else if !strings.Contains(err.Error(), "loading effective MCP") {
+		t.Fatalf("humaHandleSessionCreate() error = %v, want MCP resolution error", err)
+	}
+}
+
+func TestHandleSessionCreateIgnoresBrokenMCPWithoutACPTransport(t *testing.T) {
+	fs := newSessionFakeState(t)
+	fs.cfg.PackMCPDir = filepath.Join(fs.cityPath, "mcp")
+	if err := os.MkdirAll(fs.cfg.PackMCPDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(mcp): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(fs.cfg.PackMCPDir, "filesystem.toml"), []byte(`
+name = "filesystem"
+command = [broken
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(mcp): %v", err)
+	}
+
+	srv := New(fs)
+	h := newTestCityHandlerWith(t, fs, srv)
+
+	req := newPostRequest(cityURL(fs, "/sessions"), strings.NewReader(`{"kind":"agent","name":"myrig/worker"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusAccepted, rec.Body.String())
 	}
 }
 
@@ -1244,6 +1688,62 @@ func TestHandleSessionCreateAsync_PoolTemplateWithoutAliasUsesGeneratedWorkDirId
 		if got := bead.Metadata["agent_name"]; got != "myrig/"+sessionName {
 			t.Fatalf("agent_name(%q) = %q, want %q", sessionName, got, "myrig/"+sessionName)
 		}
+	}
+}
+
+func TestResolveAgentCreateContextUsesConcreteIdentityForMCPMaterialization(t *testing.T) {
+	supportsACP := true
+	fs := newSessionFakeState(t)
+	fs.cfg.Agents = []config.Agent{{
+		Name:              "ant",
+		Dir:               "myrig",
+		Provider:          "opencode",
+		Session:           "acp",
+		WorkDir:           ".gc/worktrees/{{.Rig}}/ants/{{.AgentBase}}",
+		MinActiveSessions: intPtr(0),
+		MaxActiveSessions: intPtr(4),
+	}}
+	fs.cfg.NamedSessions = nil
+	fs.cfg.Providers["opencode"] = config.ProviderSpec{
+		DisplayName: "OpenCode",
+		Command:     "/bin/echo",
+		PathCheck:   "true",
+		SupportsACP: &supportsACP,
+		ACPCommand:  "/bin/echo",
+		ACPArgs:     []string{"acp"},
+	}
+	fs.cfg.PackMCPDir = filepath.Join(fs.cityPath, "mcp")
+	if err := os.MkdirAll(fs.cfg.PackMCPDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(mcp): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(fs.cfg.PackMCPDir, "identity.template.toml"), []byte(`
+name = "identity"
+command = "/bin/mcp"
+args = ["{{.AgentName}}", "{{.WorkDir}}", "{{.TemplateName}}"]
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(mcp): %v", err)
+	}
+
+	srv := New(fs)
+	createCtx, err := srv.resolveAgentCreateContext("myrig/ant", "")
+	if err != nil {
+		t.Fatalf("resolveAgentCreateContext: %v", err)
+	}
+	mcpServers, err := srv.sessionMCPServers("myrig/ant", "opencode", createCtx.Identity, createCtx.WorkDir, "acp", "agent")
+	if err != nil {
+		t.Fatalf("sessionMCPServers: %v", err)
+	}
+	if len(mcpServers) != 1 {
+		t.Fatalf("len(mcpServers) = %d, want 1", len(mcpServers))
+	}
+	if got, want := mcpServers[0].Args[0], createCtx.Identity; got != want {
+		t.Fatalf("Args[0] = %q, want %q", got, want)
+	}
+	if got, want := mcpServers[0].Args[1], createCtx.WorkDir; got != want {
+		t.Fatalf("Args[1] = %q, want %q", got, want)
+	}
+	if got, want := mcpServers[0].Args[2], "myrig/ant"; got != want {
+		t.Fatalf("Args[2] = %q, want %q", got, want)
 	}
 }
 
@@ -1391,6 +1891,95 @@ func TestMaterializeNamedSessionStampsProviderFamilyMetadata(t *testing.T) {
 	}
 }
 
+func TestMaterializeNamedSessionRejectsACPTemplateWithoutACPRouting(t *testing.T) {
+	supportsACP := true
+	fs := newSessionFakeState(t)
+	fs.cfg.Agents[0].Provider = "opencode"
+	fs.cfg.Agents[0].Session = "acp"
+	fs.cfg.Providers["opencode"] = config.ProviderSpec{
+		DisplayName: "OpenCode",
+		Command:     "/bin/echo",
+		PathCheck:   "true",
+		SupportsACP: &supportsACP,
+		ACPCommand:  "/bin/echo",
+		ACPArgs:     []string{"acp"},
+	}
+	srv := New(fs)
+
+	spec, ok, err := srv.findNamedSessionSpecForTarget(fs.cityBeadStore, "worker")
+	if err != nil {
+		t.Fatalf("findNamedSessionSpecForTarget: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected named session spec")
+	}
+	if _, err := srv.materializeNamedSession(fs.cityBeadStore, spec); err == nil {
+		t.Fatal("materializeNamedSession() error = nil, want ACP routing error")
+	} else if !strings.Contains(err.Error(), "requires ACP transport") {
+		t.Fatalf("materializeNamedSession() error = %v, want ACP transport error", err)
+	}
+	items, err := fs.cityBeadStore.ListByLabel(session.LabelSession, 0)
+	if err != nil {
+		t.Fatalf("ListByLabel: %v", err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("session bead count = %d, want 0", len(items))
+	}
+}
+
+func TestMaterializeNamedSessionPersistsStoredMCPMetadata(t *testing.T) {
+	supportsACP := true
+	fs := newSessionFakeState(t)
+	fs.cfg.Agents[0].Provider = "opencode"
+	fs.cfg.Agents[0].Session = "acp"
+	fs.cfg.Providers["opencode"] = config.ProviderSpec{
+		DisplayName: "OpenCode",
+		Command:     "/bin/echo",
+		PathCheck:   "true",
+		SupportsACP: &supportsACP,
+		ACPCommand:  "/bin/echo",
+		ACPArgs:     []string{"acp"},
+	}
+	fs.cfg.PackMCPDir = filepath.Join(fs.cityPath, "mcp")
+	if err := os.MkdirAll(fs.cfg.PackMCPDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(mcp): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(fs.cfg.PackMCPDir, "identity.template.toml"), []byte(`
+name = "identity"
+command = "/bin/mcp"
+args = ["{{.AgentName}}", "{{.WorkDir}}", "{{.TemplateName}}"]
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(mcp): %v", err)
+	}
+	state := &stateWithSessionProvider{
+		fakeState: fs,
+		provider:  &transportCapableProvider{Fake: runtime.NewFake()},
+	}
+	srv := New(state)
+
+	spec, ok, err := srv.findNamedSessionSpecForTarget(fs.cityBeadStore, "worker")
+	if err != nil {
+		t.Fatalf("findNamedSessionSpecForTarget: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected named session spec")
+	}
+	id, err := srv.materializeNamedSession(fs.cityBeadStore, spec)
+	if err != nil {
+		t.Fatalf("materializeNamedSession: %v", err)
+	}
+	bead, err := fs.cityBeadStore.Get(id)
+	if err != nil {
+		t.Fatalf("Get(%s): %v", id, err)
+	}
+	if got, want := bead.Metadata[session.MCPIdentityMetadataKey], spec.Identity; got != want {
+		t.Fatalf("mcp_identity = %q, want %q", got, want)
+	}
+	if got := bead.Metadata[session.MCPServersSnapshotMetadataKey]; got == "" {
+		t.Fatal("mcp_servers_snapshot = empty, want persisted snapshot")
+	}
+}
+
 func TestHandleProviderSessionCreateWithMessageUsesProviderDefaultNudge(t *testing.T) {
 	fs := newSessionFakeState(t)
 	srv := New(fs)
@@ -1428,6 +2017,269 @@ func TestHandleProviderSessionCreateWithMessageUsesProviderDefaultNudge(t *testi
 	}
 	if nudgeCount != 1 {
 		t.Fatalf("Nudge count for %q = %d, want 1; calls=%#v", resp.SessionName, nudgeCount, fs.sp.Calls)
+	}
+}
+
+func TestHandleProviderSessionCreateUsesACPTransportCommand(t *testing.T) {
+	supportsACP := true
+	fs := newSessionFakeState(t)
+	fs.cfg.Providers["opencode"] = config.ProviderSpec{
+		DisplayName: "OpenCode",
+		Command:     "/bin/echo",
+		PathCheck:   "true",
+		SupportsACP: &supportsACP,
+		ACPCommand:  "/bin/echo",
+		ACPArgs:     []string{"acp"},
+	}
+	defaultSP := runtime.NewFake()
+	acpSP := &transportCapableProvider{Fake: runtime.NewFake()}
+	state := &stateWithSessionProvider{
+		fakeState: fs,
+		provider:  sessionauto.New(defaultSP, acpSP),
+	}
+	srv := New(state)
+	h := newTestCityHandlerWith(t, state, srv)
+
+	req := newPostRequest(cityURL(fs, "/sessions"), strings.NewReader(`{"kind":"provider","name":"opencode"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	var resp sessionResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	start := acpSP.LastStartConfig(resp.SessionName)
+	if start == nil {
+		t.Fatalf("LastStartConfig(%q) = nil", resp.SessionName)
+	}
+	if got, want := start.Command, "/bin/echo acp"; got != want {
+		t.Fatalf("start command = %q, want %q", got, want)
+	}
+	bead, err := fs.cityBeadStore.Get(resp.ID)
+	if err != nil {
+		t.Fatalf("Get(%s): %v", resp.ID, err)
+	}
+	if got, want := bead.Metadata["transport"], "acp"; got != want {
+		t.Fatalf("transport metadata = %q, want %q", got, want)
+	}
+	if defaultSP.IsRunning(resp.SessionName) {
+		t.Fatalf("default backend should not own ACP session %q", resp.SessionName)
+	}
+}
+
+func TestHumaCreateProviderSessionUsesACPTransportCommand(t *testing.T) {
+	supportsACP := true
+	fs := newSessionFakeState(t)
+	fs.cfg.Providers["opencode"] = config.ProviderSpec{
+		DisplayName: "OpenCode",
+		Command:     "/bin/echo",
+		PathCheck:   "true",
+		SupportsACP: &supportsACP,
+		ACPCommand:  "/bin/echo",
+		ACPArgs:     []string{"acp"},
+	}
+	defaultSP := runtime.NewFake()
+	acpSP := &transportCapableProvider{Fake: runtime.NewFake()}
+	state := &stateWithSessionProvider{
+		fakeState: fs,
+		provider:  sessionauto.New(defaultSP, acpSP),
+	}
+	srv := New(state)
+
+	out, err := srv.humaCreateProviderSession(context.Background(), fs.cityBeadStore, sessionCreateBody{
+		Kind: "provider",
+		Name: "opencode",
+	}, "opencode")
+	if err != nil {
+		t.Fatalf("humaCreateProviderSession: %v", err)
+	}
+	if got, want := out.Status, http.StatusCreated; got != want {
+		t.Fatalf("status = %d, want %d", got, want)
+	}
+	start := acpSP.LastStartConfig(out.Body.SessionName)
+	if start == nil {
+		t.Fatalf("LastStartConfig(%q) = nil", out.Body.SessionName)
+	}
+	if got, want := start.Command, "/bin/echo acp"; got != want {
+		t.Fatalf("start command = %q, want %q", got, want)
+	}
+	bead, err := fs.cityBeadStore.Get(out.Body.ID)
+	if err != nil {
+		t.Fatalf("Get(%s): %v", out.Body.ID, err)
+	}
+	if got, want := bead.Metadata["transport"], "acp"; got != want {
+		t.Fatalf("transport metadata = %q, want %q", got, want)
+	}
+	if defaultSP.IsRunning(out.Body.SessionName) {
+		t.Fatalf("default backend should not own ACP session %q", out.Body.SessionName)
+	}
+}
+
+func TestHandleProviderSessionCreateUsesACPTransportCapabilityProvider(t *testing.T) {
+	supportsACP := true
+	fs := newSessionFakeState(t)
+	fs.cfg.Providers["opencode"] = config.ProviderSpec{
+		DisplayName: "OpenCode",
+		Command:     "/bin/echo",
+		PathCheck:   "true",
+		SupportsACP: &supportsACP,
+		ACPCommand:  "/bin/echo",
+		ACPArgs:     []string{"acp"},
+	}
+	provider := &transportCapableProvider{Fake: runtime.NewFake()}
+	state := &stateWithSessionProvider{
+		fakeState: fs,
+		provider:  provider,
+	}
+	srv := New(state)
+	h := newTestCityHandlerWith(t, state, srv)
+
+	req := newPostRequest(cityURL(fs, "/sessions"), strings.NewReader(`{"kind":"provider","name":"opencode"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	var resp sessionResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	start := provider.LastStartConfig(resp.SessionName)
+	if start == nil {
+		t.Fatalf("LastStartConfig(%q) = nil", resp.SessionName)
+	}
+	if got, want := start.Command, "/bin/echo acp"; got != want {
+		t.Fatalf("start command = %q, want %q", got, want)
+	}
+	bead, err := fs.cityBeadStore.Get(resp.ID)
+	if err != nil {
+		t.Fatalf("Get(%s): %v", resp.ID, err)
+	}
+	if got, want := bead.Metadata["transport"], "acp"; got != want {
+		t.Fatalf("transport metadata = %q, want %q", got, want)
+	}
+}
+
+func TestHandleProviderSessionCreateUsesPerSessionMCPIdentity(t *testing.T) {
+	supportsACP := true
+	fs := newSessionFakeState(t)
+	fs.cfg.Providers["opencode"] = config.ProviderSpec{
+		DisplayName: "OpenCode",
+		Command:     "/bin/echo",
+		PathCheck:   "true",
+		SupportsACP: &supportsACP,
+		ACPCommand:  "/bin/echo",
+		ACPArgs:     []string{"acp"},
+	}
+	fs.cfg.PackMCPDir = filepath.Join(fs.cityPath, "mcp")
+	if err := os.MkdirAll(fs.cfg.PackMCPDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(mcp): %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(fs.cfg.PackMCPDir, "identity.template.toml"), []byte(`
+name = "identity"
+command = "/bin/mcp"
+args = ["{{.AgentName}}", "{{.WorkDir}}", "{{.TemplateName}}"]
+`), 0o644); err != nil {
+		t.Fatalf("WriteFile(mcp): %v", err)
+	}
+	provider := &transportCapableProvider{Fake: runtime.NewFake()}
+	state := &stateWithSessionProvider{
+		fakeState: fs,
+		provider:  provider,
+	}
+	srv := New(state)
+	h := newTestCityHandlerWith(t, state, srv)
+
+	req := newPostRequest(cityURL(fs, "/sessions"), strings.NewReader(`{"kind":"provider","name":"opencode"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	var resp sessionResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	start := provider.LastStartConfig(resp.SessionName)
+	if start == nil {
+		t.Fatalf("LastStartConfig(%q) = nil", resp.SessionName)
+	}
+	if len(start.MCPServers) != 1 {
+		t.Fatalf("Start MCPServers len = %d, want 1", len(start.MCPServers))
+	}
+	bead, err := fs.cityBeadStore.Get(resp.ID)
+	if err != nil {
+		t.Fatalf("Get(%s): %v", resp.ID, err)
+	}
+	if got := bead.Metadata[session.MCPIdentityMetadataKey]; got == "" {
+		t.Fatal("mcp_identity metadata = empty, want per-session identity")
+	}
+	if got, want := start.MCPServers[0].Args[0], bead.Metadata[session.MCPIdentityMetadataKey]; got != want {
+		t.Fatalf("Start MCP identity = %q, want %q", got, want)
+	}
+	if got := bead.Metadata[session.MCPIdentityMetadataKey]; got == "opencode" {
+		t.Fatalf("mcp_identity metadata = %q, want unique per-session identity", got)
+	}
+	if got, want := start.MCPServers[0].Args[1], fs.cityPath; got != want {
+		t.Fatalf("Start workdir arg = %q, want %q", got, want)
+	}
+	if got, want := start.MCPServers[0].Args[2], bead.Metadata[session.MCPIdentityMetadataKey]; got != want {
+		t.Fatalf("Start template arg = %q, want %q", got, want)
+	}
+}
+
+func TestHandleProviderSessionCreateRejectsACPProviderWithoutACPRouting(t *testing.T) {
+	supportsACP := true
+	fs := newSessionFakeState(t)
+	fs.cfg.Providers["opencode"] = config.ProviderSpec{
+		DisplayName: "OpenCode",
+		Command:     "/bin/echo",
+		PathCheck:   "true",
+		SupportsACP: &supportsACP,
+		ACPCommand:  "/bin/echo",
+		ACPArgs:     []string{"acp"},
+	}
+	srv := New(fs)
+	h := newTestCityHandlerWith(t, fs, srv)
+
+	req := newPostRequest(cityURL(fs, "/sessions"), strings.NewReader(`{"kind":"provider","name":"opencode"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d; body: %s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "requires ACP transport") {
+		t.Fatalf("body = %q, want ACP transport error", rec.Body.String())
+	}
+}
+
+func TestHumaCreateProviderSessionRejectsACPProviderWithoutACPRouting(t *testing.T) {
+	supportsACP := true
+	fs := newSessionFakeState(t)
+	fs.cfg.Providers["opencode"] = config.ProviderSpec{
+		DisplayName: "OpenCode",
+		Command:     "/bin/echo",
+		PathCheck:   "true",
+		SupportsACP: &supportsACP,
+		ACPCommand:  "/bin/echo",
+		ACPArgs:     []string{"acp"},
+	}
+	srv := New(fs)
+
+	if _, err := srv.humaCreateProviderSession(context.Background(), fs.cityBeadStore, sessionCreateBody{
+		Kind: "provider",
+		Name: "opencode",
+	}, "opencode"); err == nil {
+		t.Fatal("humaCreateProviderSession() error = nil, want ACP routing error")
 	}
 }
 

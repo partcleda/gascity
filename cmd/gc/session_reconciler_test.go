@@ -365,6 +365,132 @@ func TestReconcileSessionBeads_DrainAckWithAssignedOpenWorkSleepsInsteadOfDraini
 	}
 }
 
+func TestReconcileSessionBeads_UndesiredDrainAckStopsAndCloses(t *testing.T) {
+	env := newReconcilerTestEnv()
+	session := env.createSessionBead("worker", "worker")
+	env.markSessionActive(&session)
+	if err := env.sp.Start(context.Background(), "worker", runtime.Config{Command: "test-cmd"}); err != nil {
+		t.Fatalf("Start(worker): %v", err)
+	}
+
+	dops := newFakeDrainOps()
+	if err := dops.setDrainAck("worker"); err != nil {
+		t.Fatalf("setDrainAck: %v", err)
+	}
+
+	woken := reconcileSessionBeads(
+		context.Background(),
+		[]beads.Bead{session},
+		env.desiredState,
+		nil,
+		env.cfg,
+		env.sp,
+		env.store,
+		dops,
+		nil,
+		nil,
+		env.dt,
+		nil,
+		false,
+		nil,
+		"",
+		nil,
+		env.clk,
+		env.rec,
+		0,
+		0,
+		&env.stdout,
+		&env.stderr,
+	)
+	if woken != 0 {
+		t.Fatalf("woken = %d, want 0", woken)
+	}
+	if env.sp.IsRunning("worker") {
+		t.Fatal("worker should be stopped after drain-ack even after leaving desired state")
+	}
+
+	got, err := env.store.Get(session.ID)
+	if err != nil {
+		t.Fatalf("Get(%s): %v", session.ID, err)
+	}
+	if got.Status != "closed" {
+		t.Fatalf("status = %q, want closed; metadata=%v", got.Status, got.Metadata)
+	}
+	if got.Metadata["close_reason"] != "drained" {
+		t.Fatalf("close_reason = %q, want drained", got.Metadata["close_reason"])
+	}
+}
+
+func TestReconcileSessionBeads_UndesiredDrainAckWithAssignedOpenWorkSleepsInsteadOfClosing(t *testing.T) {
+	env := newReconcilerTestEnv()
+	session := env.createSessionBead("worker", "worker")
+	env.markSessionActive(&session)
+	if err := env.sp.Start(context.Background(), "worker", runtime.Config{Command: "test-cmd"}); err != nil {
+		t.Fatalf("Start(worker): %v", err)
+	}
+	if _, err := env.store.Create(beads.Bead{
+		Title:    "future work",
+		Type:     "task",
+		Status:   "open",
+		Assignee: session.ID,
+	}); err != nil {
+		t.Fatalf("Create(future work): %v", err)
+	}
+
+	dops := newFakeDrainOps()
+	if err := dops.setDrainAck("worker"); err != nil {
+		t.Fatalf("setDrainAck: %v", err)
+	}
+
+	woken := reconcileSessionBeads(
+		context.Background(),
+		[]beads.Bead{session},
+		env.desiredState,
+		nil,
+		env.cfg,
+		env.sp,
+		env.store,
+		dops,
+		nil,
+		nil,
+		env.dt,
+		nil,
+		false,
+		nil,
+		"",
+		nil,
+		env.clk,
+		env.rec,
+		0,
+		0,
+		&env.stdout,
+		&env.stderr,
+	)
+	if woken != 0 {
+		t.Fatalf("woken = %d, want 0", woken)
+	}
+	if env.sp.IsRunning("worker") {
+		t.Fatal("worker should be stopped after drain-ack even after leaving desired state")
+	}
+
+	got, err := env.store.Get(session.ID)
+	if err != nil {
+		t.Fatalf("Get(%s): %v", session.ID, err)
+	}
+	if got.Status == "closed" {
+		t.Fatalf("session bead closed unexpectedly: metadata=%v", got.Metadata)
+	}
+	if got.Metadata["state"] != "asleep" {
+		t.Fatalf("state = %q, want asleep", got.Metadata["state"])
+	}
+	if got.Metadata["sleep_reason"] != "idle" {
+		t.Fatalf("sleep_reason = %q, want idle", got.Metadata["sleep_reason"])
+	}
+	if got.Metadata["pending_create_claim"] != "" {
+		t.Fatalf("pending_create_claim = %q, want cleared after drain-ack", got.Metadata["pending_create_claim"])
+	}
+}
+
 // TestReconcileSessionBeads_DrainAckUsesLiveStoreQuery is the regression
 // guard for the stuck-pool-worker bug on ga-ttn5z. Pool workers close
 // their own work bead with `bd close` BEFORE calling `gc runtime
@@ -1600,6 +1726,52 @@ func TestReconcileSessionBeads_NoDriftBeforeStartedHashWritten(t *testing.T) {
 	}
 }
 
+func TestReconcileSessionBeads_DefersPendingCreateRecoveryWhileStartInFlight(t *testing.T) {
+	env := newReconcilerTestEnv()
+	env.cfg = &config.City{Agents: []config.Agent{{Name: "worker"}}}
+	env.desiredState["worker"] = TemplateParams{
+		Command:      "new-cmd",
+		SessionName:  "worker",
+		TemplateName: "worker",
+	}
+	session := env.createSessionBead("worker", "worker")
+	env.setSessionMetadata(&session, map[string]string{
+		"command":              "old-cmd",
+		"state":                "creating",
+		"pending_create_claim": "true",
+		"last_woke_at":         env.clk.Now().UTC().Format(time.RFC3339),
+	})
+	if err := env.sp.Start(context.Background(), "worker", runtime.Config{Command: "old-cmd"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.sp.SetMeta("worker", "GC_SESSION_ID", session.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.sp.SetMeta("worker", "GC_INSTANCE_TOKEN", session.Metadata["instance_token"]); err != nil {
+		t.Fatal(err)
+	}
+
+	woken := env.reconcile([]beads.Bead{session})
+	if woken != 0 {
+		t.Fatalf("woken = %d, want 0 while pending create start is still in flight", woken)
+	}
+	got, err := env.store.Get(session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Metadata["started_config_hash"] != "" {
+		t.Fatalf("started_config_hash = %q, want empty until async start commits", got.Metadata["started_config_hash"])
+	}
+	if got.Metadata["pending_create_claim"] != "true" {
+		t.Fatalf("pending_create_claim = %q, want preserved while async start is in flight", got.Metadata["pending_create_claim"])
+	}
+	switch got.Metadata["state"] {
+	case "creating", "awake":
+	default:
+		t.Fatalf("state = %q, want creating or awake while async start is in flight", got.Metadata["state"])
+	}
+}
+
 func TestReconcileSessionBeads_PendingCreateLeasePreventsOrphanClose(t *testing.T) {
 	env := newReconcilerTestEnv()
 	env.cfg = &config.City{Agents: []config.Agent{{Name: "worker"}}}
@@ -2172,6 +2344,44 @@ func TestReconcileSessionBeads_StableClearsFailures(t *testing.T) {
 	b, _ := env.store.Get(session.ID)
 	if b.Metadata["wake_attempts"] != "0" {
 		t.Errorf("wake_attempts = %q, want %q", b.Metadata["wake_attempts"], "0")
+	}
+}
+
+func TestReconcileSessionBeads_StableAlreadyClearDoesNotWriteMetadata(t *testing.T) {
+	env := newReconcilerTestEnv()
+	countingStore := newCountingMetadataStore()
+	env.store = countingStore
+	env.cfg = &config.City{Agents: []config.Agent{{Name: "worker"}}}
+	env.addDesired("worker", "worker", true)
+	session := env.createSessionBead("worker", "worker")
+	stableWake := env.clk.Now().Add(-2 * time.Minute).UTC().Format(time.RFC3339)
+	env.setSessionMetadata(&session, map[string]string{
+		"state":             "active",
+		"wake_attempts":     "3",
+		"last_woke_at":      stableWake,
+		"quarantined_until": "",
+	})
+
+	countingStore.singleCalls = 0
+	countingStore.batchCalls = 0
+	env.reconcile([]beads.Bead{session})
+	if countingStore.batchCalls == 0 {
+		t.Fatal("first stable tick should write metadata to clear wake failures")
+	}
+
+	cleared, err := env.store.Get(session.ID)
+	if err != nil {
+		t.Fatalf("getting session bead: %v", err)
+	}
+	if cleared.Metadata["wake_attempts"] != "0" {
+		t.Fatalf("wake_attempts after first tick = %q, want 0", cleared.Metadata["wake_attempts"])
+	}
+
+	countingStore.singleCalls = 0
+	countingStore.batchCalls = 0
+	env.reconcile([]beads.Bead{cleared})
+	if got := countingStore.singleCalls + countingStore.batchCalls; got != 0 {
+		t.Fatalf("second stable tick performed %d metadata write(s), want 0", got)
 	}
 }
 

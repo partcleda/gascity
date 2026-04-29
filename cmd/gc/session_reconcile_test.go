@@ -917,6 +917,28 @@ func TestCheckStability_RapidExit(t *testing.T) {
 	}
 }
 
+func TestCheckStability_PendingCreateInFlightNotCounted(t *testing.T) {
+	now := time.Date(2026, 3, 8, 12, 0, 0, 0, time.UTC)
+	clk := &clock.Fake{Time: now}
+	store := newTestStore()
+	dt := newDrainTracker()
+	session := makeBead("b1", map[string]string{
+		"last_woke_at":         now.Add(-10 * time.Second).Format(time.RFC3339),
+		"pending_create_claim": "true",
+		"wake_attempts":        "0",
+	})
+
+	if checkStability(&session, nil, false, dt, store, clk) {
+		t.Fatal("in-flight pending create should not be counted as a rapid exit")
+	}
+	if got := session.Metadata["wake_attempts"]; got != "0" {
+		t.Fatalf("wake_attempts = %q, want 0", got)
+	}
+	if got := session.Metadata["last_woke_at"]; got == "" {
+		t.Fatal("last_woke_at should remain while pending create is still in flight")
+	}
+}
+
 func TestCheckStability_DrainingNotCounted(t *testing.T) {
 	now := time.Date(2026, 3, 8, 12, 0, 0, 0, time.UTC)
 	clk := &clock.Fake{Time: now}
@@ -1069,6 +1091,49 @@ func TestClearWakeFailures(t *testing.T) {
 	}
 	if session.Metadata["quarantined_until"] != "" {
 		t.Error("quarantined_until should be cleared")
+	}
+}
+
+func TestClearWakeFailures_SkipsWriteWhenAlreadyClear(t *testing.T) {
+	tests := []struct {
+		name    string
+		meta    map[string]string
+		wantNil bool
+	}{
+		{
+			name:    "zero attempts and empty quarantine",
+			meta:    map[string]string{"wake_attempts": "0", "quarantined_until": ""},
+			wantNil: true,
+		},
+		{
+			name:    "missing attempts and empty quarantine",
+			meta:    map[string]string{},
+			wantNil: true,
+		},
+		{
+			name:    "nonzero attempts triggers write",
+			meta:    map[string]string{"wake_attempts": "3", "quarantined_until": ""},
+			wantNil: false,
+		},
+		{
+			name:    "quarantine set triggers write",
+			meta:    map[string]string{"wake_attempts": "0", "quarantined_until": "2026-03-08T12:00:00Z"},
+			wantNil: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newTestStore()
+			session := makeBead("b1", tt.meta)
+			clearWakeFailures(&session, store)
+			wrote := len(store.metadata["b1"]) > 0
+			if tt.wantNil && wrote {
+				t.Errorf("expected no store write, but got %v", store.metadata["b1"])
+			}
+			if !tt.wantNil && !wrote {
+				t.Error("expected a store write, but none occurred")
+			}
+		})
 	}
 }
 

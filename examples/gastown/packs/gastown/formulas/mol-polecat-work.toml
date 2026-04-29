@@ -33,7 +33,7 @@ refinery. Resume the existing branch — don't redo all the work.
 | Unsure what to do | Mail Witness, don't guess |"""
 formula = "mol-polecat-work"
 extends = ["mol-polecat-base"]
-version = 8
+version = 9
 
 [[steps]]
 id = "workspace-setup"
@@ -92,6 +92,60 @@ Check if `metadata.branch` already records a branch:
 ```bash
 BRANCH=$(gc bd show {{issue}} --json | jq -r '.[0].metadata.branch // empty')
 ```
+
+**Pre-spawn duplicate-branch check.** If `metadata.branch` is empty, scan
+origin for any polecat branch already carrying this bead ID before
+creating a fresh one. Re-spawning a polecat for a bead that another
+polecat alias is already working leads to duplicate PRs against the same
+issue. The check turns that re-spawn into a hand-off (same alias) or a
+soft refusal (different alias).
+
+```bash
+if [ -z "$BRANCH" ]; then
+    ALIAS=$(basename "$GC_DIR")
+    EXISTING=$(git ls-remote origin "refs/heads/polecat/*" 2>/dev/null \
+        | awk '{print $2}' | sed 's,refs/heads/,,' \
+        | grep -E "/{{issue}}([@-]|\\$)" || true)
+    if [ -n "$EXISTING" ]; then
+        SAME_ALIAS=""
+        OTHER_ALIAS=""
+        for B in $EXISTING; do
+            case "$B" in
+                polecat/$ALIAS/*|polecat/$ALIAS-*) SAME_ALIAS="$B" ;;
+                *) OTHER_ALIAS="$OTHER_ALIAS $B" ;;
+            esac
+        done
+        if [ -n "$SAME_ALIAS" ]; then
+            BRANCH="$SAME_ALIAS"
+            gc bd update {{issue}} --set-metadata branch="$BRANCH"
+            if [ -n "$OTHER_ALIAS" ]; then
+                gc nudge "$GC_RIG/witness" \
+                    "Resumed $BRANCH for {{issue}} but other polecats also have branches:$OTHER_ALIAS"
+            fi
+        elif [ -n "$OTHER_ALIAS" ]; then
+            echo "DUPLICATE: existing polecat branches for {{issue}} from another alias:"
+            echo "$OTHER_ALIAS"
+            gc mail send "$GC_RIG/witness" \
+                -s "DUPLICATE BRANCH: {{issue}} has branches from multiple polecats" \
+                -m "Existing polecat branches for {{issue}} from another alias detected.
+My alias: $ALIAS
+Other branches:$OTHER_ALIAS
+Released claim back to pool."
+            gc bd update {{issue}} --status=open --assignee="" \
+                --set-metadata duplicate_detected="$OTHER_ALIAS"
+            gc runtime drain-ack
+            exit 0
+        fi
+    fi
+fi
+```
+
+Same-alias match → `BRANCH` (and `metadata.branch`) point at our prior
+branch; the **If branch exists in metadata** path below checks it out
+(and rebases if `rejection_reason` is set). Different-alias match →
+claim is released, witness is notified, and this polecat exits without
+opening a duplicate PR. No matches → `BRANCH` is still empty and the
+**If no branch** path below creates a fresh one.
 
 **If branch exists in metadata** — treat it as authoritative. This
 metadata may come from rejection recovery or from a caller that wants

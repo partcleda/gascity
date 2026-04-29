@@ -1210,10 +1210,15 @@ func reconcileCities(
 
 		var sp runtime.Provider
 		spErr := runPostPrepareStep("creating_session_provider", func() error {
-			var err error
-			sp, err = newSessionProviderByName(
-				effectiveProviderName(cfg.Session.Provider), cfg.Session, cityName, path)
-			return err
+			providerName := effectiveProviderName(cfg.Session.Provider)
+			ctx := sessionProviderContextForCity(cfg, path, providerName)
+			snapshot := loadProviderSessionSnapshot(ctx)
+			resolvedSP, err := newSessionProviderFromContextWithError(ctx, snapshot)
+			if err != nil {
+				return err
+			}
+			sp = resolvedSP
+			return nil
 		})
 		if spErr != nil {
 			cr.BatchUpdate(func(

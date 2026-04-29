@@ -167,6 +167,7 @@ func (c *ConfigRefsCheck) Run(_ *CheckContext) *CheckResult {
 	r := &CheckResult{Name: c.Name()}
 	var issues []string
 
+	builtinProviders := config.BuiltinProviders()
 	for _, a := range c.cfg.Agents {
 		qn := a.QualifiedName()
 		if a.PromptTemplate != "" {
@@ -190,7 +191,9 @@ func (c *ConfigRefsCheck) Run(_ *CheckContext) *CheckResult {
 			}
 		}
 		if a.Provider != "" && len(c.cfg.Providers) > 0 {
-			if _, ok := c.cfg.Providers[a.Provider]; !ok {
+			_, declared := c.cfg.Providers[a.Provider]
+			_, builtin := builtinProviders[a.Provider]
+			if !declared && !builtin {
 				issues = append(issues, fmt.Sprintf("agent %q: provider %q not defined in [providers]", qn, a.Provider))
 			}
 		}

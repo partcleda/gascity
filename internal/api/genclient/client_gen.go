@@ -372,6 +372,8 @@ type AnnotatedAgentResponse struct {
 
 // AnnotatedProviderResponse defines model for AnnotatedProviderResponse.
 type AnnotatedProviderResponse struct {
+	AcpArgs     *[]string          `json:"acp_args,omitempty"`
+	AcpCommand  *string            `json:"acp_command,omitempty"`
 	Args        *[]string          `json:"args,omitempty"`
 	Command     *string            `json:"command,omitempty"`
 	DisplayName *string            `json:"display_name,omitempty"`
@@ -1759,6 +1761,12 @@ type PoolOverride struct {
 
 // ProviderCreateInputBody defines model for ProviderCreateInputBody.
 type ProviderCreateInputBody struct {
+	// AcpArgs ACP transport command arguments override.
+	AcpArgs *[]string `json:"acp_args,omitempty"`
+
+	// AcpCommand ACP transport command binary override.
+	AcpCommand *string `json:"acp_command,omitempty"`
+
 	// Args Command arguments.
 	Args *[]string `json:"args,omitempty"`
 
@@ -1813,6 +1821,8 @@ type ProviderOptionDTO struct {
 
 // ProviderPatch defines model for ProviderPatch.
 type ProviderPatch struct {
+	ACPArgs            *[]string         `json:"ACPArgs"`
+	ACPCommand         *string           `json:"ACPCommand"`
 	Args               *[]string         `json:"Args"`
 	ArgsAppend         *[]string         `json:"ArgsAppend"`
 	Base               *string           `json:"Base"`
@@ -1829,6 +1839,12 @@ type ProviderPatch struct {
 
 // ProviderPatchSetInputBody defines model for ProviderPatchSetInputBody.
 type ProviderPatchSetInputBody struct {
+	// AcpArgs Override ACP transport command arguments.
+	AcpArgs *[]string `json:"acp_args,omitempty"`
+
+	// AcpCommand Override ACP transport command binary.
+	AcpCommand *string `json:"acp_command,omitempty"`
+
 	// Args Override command arguments.
 	Args *[]string `json:"args,omitempty"`
 
@@ -1887,6 +1903,8 @@ type ProviderReadinessResponse struct {
 
 // ProviderResponse defines model for ProviderResponse.
 type ProviderResponse struct {
+	AcpArgs      *[]string          `json:"acp_args,omitempty"`
+	AcpCommand   *string            `json:"acp_command,omitempty"`
 	Args         *[]string          `json:"args,omitempty"`
 	Builtin      bool               `json:"builtin"`
 	CityLevel    bool               `json:"city_level"`
@@ -1901,6 +1919,8 @@ type ProviderResponse struct {
 
 // ProviderSpecJSON defines model for ProviderSpecJSON.
 type ProviderSpecJSON struct {
+	AcpArgs      *[]string          `json:"acp_args,omitempty"`
+	AcpCommand   *string            `json:"acp_command,omitempty"`
 	Args         *[]string          `json:"args,omitempty"`
 	Command      *string            `json:"command,omitempty"`
 	DisplayName  *string            `json:"display_name,omitempty"`
@@ -1912,6 +1932,12 @@ type ProviderSpecJSON struct {
 
 // ProviderUpdateInputBody defines model for ProviderUpdateInputBody.
 type ProviderUpdateInputBody struct {
+	// AcpArgs ACP transport command arguments override.
+	AcpArgs *[]string `json:"acp_args,omitempty"`
+
+	// AcpCommand ACP transport command binary override.
+	AcpCommand *string `json:"acp_command,omitempty"`
+
 	// Args Command arguments.
 	Args *[]string `json:"args,omitempty"`
 
@@ -4299,6 +4325,12 @@ type PostV0CityByCityNameOrderByNameDisableParams struct {
 type PostV0CityByCityNameOrderByNameEnableParams struct {
 	// XGCRequest Anti-CSRF header required on mutation requests. Any non-empty value is accepted; the header's presence is what the server checks.
 	XGCRequest string `json:"X-GC-Request"`
+}
+
+// GetV0CityByCityNameOrdersCheckParams defines parameters for GetV0CityByCityNameOrdersCheck.
+type GetV0CityByCityNameOrdersCheckParams struct {
+	// Fresh Bypass cached order-check responses and cached order history.
+	Fresh *bool `form:"fresh,omitempty" json:"fresh,omitempty"`
 }
 
 // GetV0CityByCityNameOrdersFeedParams defines parameters for GetV0CityByCityNameOrdersFeed.
@@ -8160,7 +8192,7 @@ type ClientInterface interface {
 	GetV0CityByCityNameOrders(ctx context.Context, cityName string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetV0CityByCityNameOrdersCheck request
-	GetV0CityByCityNameOrdersCheck(ctx context.Context, cityName string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetV0CityByCityNameOrdersCheck(ctx context.Context, cityName string, params *GetV0CityByCityNameOrdersCheckParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetV0CityByCityNameOrdersFeed request
 	GetV0CityByCityNameOrdersFeed(ctx context.Context, cityName string, params *GetV0CityByCityNameOrdersFeedParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -9658,8 +9690,8 @@ func (c *Client) GetV0CityByCityNameOrders(ctx context.Context, cityName string,
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetV0CityByCityNameOrdersCheck(ctx context.Context, cityName string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetV0CityByCityNameOrdersCheckRequest(c.Server, cityName)
+func (c *Client) GetV0CityByCityNameOrdersCheck(ctx context.Context, cityName string, params *GetV0CityByCityNameOrdersCheckParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetV0CityByCityNameOrdersCheckRequest(c.Server, cityName, params)
 	if err != nil {
 		return nil, err
 	}
@@ -15926,7 +15958,7 @@ func NewGetV0CityByCityNameOrdersRequest(server string, cityName string) (*http.
 }
 
 // NewGetV0CityByCityNameOrdersCheckRequest generates requests for GetV0CityByCityNameOrdersCheck
-func NewGetV0CityByCityNameOrdersCheckRequest(server string, cityName string) (*http.Request, error) {
+func NewGetV0CityByCityNameOrdersCheckRequest(server string, cityName string, params *GetV0CityByCityNameOrdersCheckParams) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -15949,6 +15981,28 @@ func NewGetV0CityByCityNameOrdersCheckRequest(server string, cityName string) (*
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Fresh != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "fresh", *params.Fresh, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
@@ -19951,7 +20005,7 @@ type ClientWithResponsesInterface interface {
 	GetV0CityByCityNameOrdersWithResponse(ctx context.Context, cityName string, reqEditors ...RequestEditorFn) (*GetV0CityByCityNameOrdersResponse, error)
 
 	// GetV0CityByCityNameOrdersCheckWithResponse request
-	GetV0CityByCityNameOrdersCheckWithResponse(ctx context.Context, cityName string, reqEditors ...RequestEditorFn) (*GetV0CityByCityNameOrdersCheckResponse, error)
+	GetV0CityByCityNameOrdersCheckWithResponse(ctx context.Context, cityName string, params *GetV0CityByCityNameOrdersCheckParams, reqEditors ...RequestEditorFn) (*GetV0CityByCityNameOrdersCheckResponse, error)
 
 	// GetV0CityByCityNameOrdersFeedWithResponse request
 	GetV0CityByCityNameOrdersFeedWithResponse(ctx context.Context, cityName string, params *GetV0CityByCityNameOrdersFeedParams, reqEditors ...RequestEditorFn) (*GetV0CityByCityNameOrdersFeedResponse, error)
@@ -24387,8 +24441,8 @@ func (c *ClientWithResponses) GetV0CityByCityNameOrdersWithResponse(ctx context.
 }
 
 // GetV0CityByCityNameOrdersCheckWithResponse request returning *GetV0CityByCityNameOrdersCheckResponse
-func (c *ClientWithResponses) GetV0CityByCityNameOrdersCheckWithResponse(ctx context.Context, cityName string, reqEditors ...RequestEditorFn) (*GetV0CityByCityNameOrdersCheckResponse, error) {
-	rsp, err := c.GetV0CityByCityNameOrdersCheck(ctx, cityName, reqEditors...)
+func (c *ClientWithResponses) GetV0CityByCityNameOrdersCheckWithResponse(ctx context.Context, cityName string, params *GetV0CityByCityNameOrdersCheckParams, reqEditors ...RequestEditorFn) (*GetV0CityByCityNameOrdersCheckResponse, error) {
+	rsp, err := c.GetV0CityByCityNameOrdersCheck(ctx, cityName, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}

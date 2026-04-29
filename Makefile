@@ -1,4 +1,5 @@
 GOLANGCI_LINT_VERSION := 2.9.0
+BUILDX_VERSION := 0.21.2
 
 # Detect OS and arch for binary download.
 GOOS   := $(shell go env GOOS)
@@ -20,7 +21,7 @@ LDFLAGS := -X main.version=$(VERSION) \
            -X main.commit=$(COMMIT) \
            -X main.date=$(BUILD_TIME)
 
-.PHONY: build check check-all check-bd check-docker check-docs check-dolt check-version-tag lint fmt-check fmt vet test test-cmd-gc-process test-worker-core test-worker-core-phase2 test-worker-core-phase2-real-transport test-worker-inference-phase3 test-acceptance test-acceptance-b test-acceptance-c test-acceptance-all test-tutorial-goldens test-tutorial-regression test-tutorial test-integration test-integration-shards test-integration-shards-cover test-integration-packages test-integration-packages-cover test-integration-review-formulas test-integration-review-formulas-cover test-integration-review-formulas-basic test-integration-review-formulas-basic-cover test-integration-review-formulas-retries test-integration-review-formulas-retries-cover test-integration-review-formulas-recovery test-integration-review-formulas-recovery-cover test-integration-bdstore test-integration-bdstore-cover test-integration-rest test-integration-rest-cover test-integration-rest-smoke test-integration-rest-smoke-cover test-integration-rest-full test-integration-rest-full-cover test-mcp-mail test-docker test-k8s test-cover cover install install-tools install-buildx setup clean generate check-schema docker-base docker-agent docker-controller docs-dev dashboard-smoke
+.PHONY: build check check-all check-bd check-docker check-docs check-dolt check-version-tag lint fmt-check fmt vet test test-fsys-darwin-compile test-cmd-gc-process test-worker-core test-worker-core-phase2 test-worker-core-phase2-real-transport test-worker-inference-phase3 test-acceptance test-acceptance-b test-acceptance-c test-acceptance-all test-tutorial-goldens test-tutorial-regression test-tutorial test-integration test-integration-shards test-integration-shards-cover test-integration-packages test-integration-packages-cover test-integration-review-formulas test-integration-review-formulas-cover test-integration-review-formulas-basic test-integration-review-formulas-basic-cover test-integration-review-formulas-retries test-integration-review-formulas-retries-cover test-integration-review-formulas-recovery test-integration-review-formulas-recovery-cover test-integration-bdstore test-integration-bdstore-cover test-integration-rest test-integration-rest-cover test-integration-rest-smoke test-integration-rest-smoke-cover test-integration-rest-full test-integration-rest-full-cover test-mcp-mail test-docker test-k8s test-cover cover install install-tools install-buildx setup clean generate check-schema docker-base docker-agent docker-controller docs-dev dashboard-smoke
 
 ## build: compile gc binary with version metadata
 build:
@@ -163,15 +164,22 @@ TEST_ENV = env -i \
 
 ## test: run fast unit tests (skip integration-tagged and GC_FAST_UNIT-gated process tests)
 ## The skipped cmd/gc process-backed scenarios remain covered by
-## `make test-cmd-gc-process` locally and the CI `test-integration-packages` shard.
+## `make test-cmd-gc-process` locally and the CI `cmd/gc process suite` job.
 ## Wrapped in $(TEST_ENV) — see comment above for why.
-test:
+test: test-fsys-darwin-compile
 	$(TEST_ENV) GC_FAST_UNIT=1 go test ./...
+
+## test-fsys-darwin-compile: cross-compile internal/fsys for macOS so
+## unix.Stat_t field-type regressions fail in the default fast test path.
+test-fsys-darwin-compile:
+	@tmp=$$(mktemp -d); \
+	trap 'rm -rf "$$tmp"' EXIT; \
+	$(TEST_ENV) GOOS=darwin GOARCH=arm64 go test -c -o "$$tmp/fsys.test" ./internal/fsys
 
 ## test-cmd-gc-process: run the full non-short cmd/gc suite, including the
 ## process-backed lifecycle coverage routed out of the default fast loop
 test-cmd-gc-process:
-	$(TEST_ENV) GC_FAST_UNIT=0 go test ./cmd/gc
+	$(TEST_ENV) GC_FAST_UNIT=0 go test -count=1 -timeout 20m ./cmd/gc
 
 ## test-worker-core: run deterministic worker transcript and continuation conformance
 test-worker-core:
@@ -348,8 +356,8 @@ UNIT_COVER_PKGS := $(shell go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.Im
 
 ## test-cover: run fast unit-test coverage without the integration-tagged package sweep
 ## The skipped cmd/gc process-backed scenarios remain covered by
-## `make test-cmd-gc-process` locally and the CI `test-integration-packages` shard.
-test-cover:
+## `make test-cmd-gc-process` locally and the CI `cmd/gc process suite` job.
+test-cover: test-fsys-darwin-compile
 	$(TEST_ENV) GC_FAST_UNIT=1 go test -timeout 8m -coverprofile=coverage.txt $(UNIT_COVER_PKGS)
 
 ## cover: run tests and show coverage report
@@ -361,8 +369,7 @@ install-tools: $(GOLANGCI_LINT) install-oapi-codegen
 
 $(GOLANGCI_LINT):
 	@echo "Installing golangci-lint v$(GOLANGCI_LINT_VERSION)..."
-	curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | \
-		sh -s -- -b $(BIN_DIR) v$(GOLANGCI_LINT_VERSION)
+	GOBIN=$(BIN_DIR) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v$(GOLANGCI_LINT_VERSION)
 
 ## install-oapi-codegen: install pinned oapi-codegen so the spec→client drift
 ## test (TestGeneratedClientInSync) can regenerate client_gen.go without skipping.
@@ -376,10 +383,23 @@ install-oapi-codegen:
 ## install-buildx: install docker buildx plugin
 install-buildx:
 	@mkdir -p $(HOME)/.docker/cli-plugins
-	curl -sSfL "https://github.com/docker/buildx/releases/download/v0.21.2/buildx-v0.21.2.$$(go env GOOS)-$$(go env GOARCH)" \
-		-o $(HOME)/.docker/cli-plugins/docker-buildx
-	chmod +x $(HOME)/.docker/cli-plugins/docker-buildx
-	@echo "Installed docker-buildx v0.21.2"
+	@case "$(GOOS)-$(GOARCH)" in \
+		linux-amd64|linux-arm64) ;; \
+		*) echo "Unsupported docker-buildx platform: $(GOOS)-$(GOARCH)" >&2; exit 1 ;; \
+	esac; \
+	tmp="$$(mktemp)"; \
+	checksums="$$(mktemp)"; \
+	trap 'rm -f "$$tmp" "$$checksums"' EXIT; \
+	curl -sSfL "https://github.com/docker/buildx/releases/download/v$(BUILDX_VERSION)/checksums.txt" \
+		-o "$$checksums"; \
+	asset="buildx-v$(BUILDX_VERSION).$(GOOS)-$(GOARCH)"; \
+	expected_sha="$$(awk -v asset="*$$asset" '$$2 == asset {print $$1}' "$$checksums")"; \
+	if [ -z "$$expected_sha" ]; then echo "Missing checksum for $$asset" >&2; exit 1; fi; \
+	curl -sSfL "https://github.com/docker/buildx/releases/download/v$(BUILDX_VERSION)/buildx-v$(BUILDX_VERSION).$(GOOS)-$(GOARCH)" \
+		-o "$$tmp"; \
+	echo "$$expected_sha  $$tmp" | sha256sum -c -; \
+	install -m 0755 "$$tmp" $(HOME)/.docker/cli-plugins/docker-buildx
+	@echo "Installed docker-buildx v$(BUILDX_VERSION)"
 
 ## test-mcp-mail: run mcp_agent_mail live conformance test (auto-starts server)
 test-mcp-mail:
@@ -404,7 +424,7 @@ docs-dev:
 
 ## dashboard-build: regenerate SPA types + compile the dist bundle
 dashboard-build:
-	cd cmd/gc/dashboard/web && npm install --silent && npm run gen && npm run build
+	cd cmd/gc/dashboard/web && npm ci --silent && npm run gen && npm run build
 
 ## dashboard-dev: Vite dev server (HMR) for SPA iteration
 dashboard-dev:

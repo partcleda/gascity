@@ -170,6 +170,7 @@ func cmdSessionNew(args []string, alias, title, titleHint string, noAttach bool,
 		fmt.Fprintf(stderr, "gc session new: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
 	}
+	sessionTransport := config.ResolveSessionCreateTransport(found.Session, resolved)
 	requestedAlias, err := session.ValidateAlias(alias)
 	if err != nil {
 		fmt.Fprintf(stderr, "gc session new: %v\n", err) //nolint:errcheck // best-effort stderr
@@ -192,6 +193,10 @@ func cmdSessionNew(args []string, alias, title, titleHint string, noAttach bool,
 	}
 
 	sp := newSessionProvider()
+	if err := validateResolvedSessionTransport(resolved, sessionTransport, sp); err != nil {
+		fmt.Fprintf(stderr, "gc session new: %v\n", err) //nolint:errcheck // best-effort stderr
+		return 1
+	}
 
 	// Build the work directory.
 	sessionQualifiedName := workdirutil.SessionQualifiedName(cityPath, found, cfg.Rigs, requestedAlias, explicitName)
@@ -223,7 +228,7 @@ func cmdSessionNew(args []string, alias, title, titleHint string, noAttach bool,
 	if err != nil {
 		titleProvider = nil
 	}
-	sessionCommand, err := resolvedSessionCommand(cityPath, resolved, nil)
+	sessionCommand, err := resolvedSessionCommand(cityPath, resolved, nil, sessionTransport)
 	if err != nil {
 		fmt.Fprintf(stderr, "gc session new: %v\n", err) //nolint:errcheck // best-effort stderr
 		return 1
@@ -245,6 +250,20 @@ func cmdSessionNew(args []string, alias, title, titleHint string, noAttach bool,
 			if resolved.BuiltinAncestor != "" && resolved.BuiltinAncestor != resolved.Name {
 				kindMeta["builtin_ancestor"] = resolved.BuiltinAncestor
 			}
+			kindMeta, err = newSessionStoredMCPMetadata(
+				cityPath,
+				cfg,
+				alias,
+				canonicalTemplate,
+				resolved.Name,
+				workDir,
+				sessionTransport,
+				kindMeta,
+			)
+			if err != nil {
+				fmt.Fprintf(stderr, "gc session new: %v\n", err) //nolint:errcheck // best-effort stderr
+				return 1
+			}
 			handle, err := newWorkerSessionHandleForResolvedRuntimeWithConfig(
 				cityPath,
 				store,
@@ -257,7 +276,7 @@ func cmdSessionNew(args []string, alias, title, titleHint string, noAttach bool,
 				sessionCommand,
 				found.Provider,
 				workDir,
-				found.Session,
+				sessionTransport,
 				resolved,
 				kindMeta,
 			)
@@ -295,8 +314,8 @@ func cmdSessionNew(args []string, alias, title, titleHint string, noAttach bool,
 
 			fmt.Fprintf(stdout, "Session %s created from template %q (reconciler will start it).\n", info.ID, canonicalTemplate) //nolint:errcheck // best-effort stdout
 
-			if !shouldAttachNewSession(noAttach, found.Session) {
-				if found.Session == "acp" && !noAttach {
+			if !shouldAttachNewSession(noAttach, sessionTransport) {
+				if sessionTransport == "acp" && !noAttach {
 					fmt.Fprintln(stdout, "Session uses ACP transport; not attaching.") //nolint:errcheck // best-effort stdout
 				}
 				return 0
@@ -328,6 +347,20 @@ func cmdSessionNew(args []string, alias, title, titleHint string, noAttach bool,
 	if resolved.BuiltinAncestor != "" && resolved.BuiltinAncestor != resolved.Name {
 		kindMeta["builtin_ancestor"] = resolved.BuiltinAncestor
 	}
+	kindMeta, err = newSessionStoredMCPMetadata(
+		cityPath,
+		cfg,
+		alias,
+		canonicalTemplate,
+		resolved.Name,
+		workDir,
+		sessionTransport,
+		kindMeta,
+	)
+	if err != nil {
+		fmt.Fprintf(stderr, "gc session new: %v\n", err) //nolint:errcheck // best-effort stderr
+		return 1
+	}
 	handle, err := newWorkerSessionHandleForResolvedRuntimeWithConfig(
 		cityPath,
 		store,
@@ -340,7 +373,7 @@ func cmdSessionNew(args []string, alias, title, titleHint string, noAttach bool,
 		sessionCommand,
 		found.Provider,
 		workDir,
-		found.Session,
+		sessionTransport,
 		resolved,
 		kindMeta,
 	)
@@ -375,8 +408,8 @@ func cmdSessionNew(args []string, alias, title, titleHint string, noAttach bool,
 
 	fmt.Fprintf(stdout, "Session %s created from template %q.\n", info.ID, canonicalTemplate) //nolint:errcheck // best-effort stdout
 
-	if !shouldAttachNewSession(noAttach, found.Session) {
-		if found.Session == "acp" && !noAttach {
+	if !shouldAttachNewSession(noAttach, sessionTransport) {
+		if sessionTransport == "acp" && !noAttach {
 			fmt.Fprintln(stdout, "Session uses ACP transport; not attaching.") //nolint:errcheck // best-effort stdout
 		}
 		return 0
@@ -390,6 +423,35 @@ func cmdSessionNew(args []string, alias, title, titleHint string, noAttach bool,
 	return 0
 }
 
+func newSessionStoredMCPMetadata(
+	cityPath string,
+	cfg *config.City,
+	alias, template, provider, workDir, transport string,
+	metadata map[string]string,
+) (map[string]string, error) {
+	if strings.TrimSpace(transport) != "acp" {
+		return metadata, nil
+	}
+	mcpServers, err := resolvedRuntimeMCPServersWithConfig(
+		cityPath,
+		cfg,
+		alias,
+		template,
+		provider,
+		workDir,
+		transport,
+		metadata,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return session.WithStoredMCPMetadata(
+		metadata,
+		firstNonEmptyGCString(metadata[session.MCPIdentityMetadataKey], metadata["agent_name"]),
+		mcpServers,
+	)
+}
+
 // maybeAutoTitle runs the auto-title flow for a newly created session.
 // The provider should already be resolved by the caller. It returns a
 // channel that is closed when background title generation completes.
@@ -401,11 +463,52 @@ func maybeAutoTitle(store beads.Store, beadID, userTitle, titleHint string, prov
 	})
 }
 
-func resolvedSessionCommand(cityPath string, resolved *config.ResolvedProvider, optionOverrides map[string]string) (string, error) {
+type acpRouteRegistrar interface {
+	RouteACP(name string)
+}
+
+func validateResolvedSessionTransport(resolved *config.ResolvedProvider, transport string, sp runtime.Provider) error {
+	transport = strings.TrimSpace(transport)
+	if transport != "acp" {
+		return nil
+	}
+	providerName := ""
+	if resolved != nil {
+		providerName = resolved.Name
+		if !resolved.SupportsACP {
+			if providerName == "" {
+				providerName = transport
+			}
+			return fmt.Errorf("provider %q does not support ACP transport", providerName)
+		}
+	}
+	if sessionProviderSupportsACP(sp) {
+		return nil
+	}
+	if providerName == "" {
+		providerName = transport
+	}
+	return fmt.Errorf("provider %q requires ACP transport but the session provider cannot route ACP sessions", providerName)
+}
+
+func sessionProviderSupportsACP(sp runtime.Provider) bool {
+	if sp == nil {
+		return false
+	}
+	if provider, ok := sp.(runtime.TransportCapabilityProvider); ok {
+		return provider.SupportsTransport("acp")
+	}
+	if _, ok := sp.(acpRouteRegistrar); ok {
+		return true
+	}
+	return false
+}
+
+func resolvedSessionCommand(cityPath string, resolved *config.ResolvedProvider, optionOverrides map[string]string, transport string) (string, error) {
 	if resolved == nil {
 		return "", fmt.Errorf("resolved provider is nil")
 	}
-	launchCommand, err := config.BuildProviderLaunchCommand(cityPath, resolved, optionOverrides)
+	launchCommand, err := config.BuildProviderLaunchCommand(cityPath, resolved, optionOverrides, transport)
 	if err != nil {
 		return "", fmt.Errorf("resolving provider launch command: %w", err)
 	}

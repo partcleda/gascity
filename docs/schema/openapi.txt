@@ -674,6 +674,15 @@
       "AnnotatedProviderResponse": {
         "additionalProperties": false,
         "properties": {
+          "acp_args": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "acp_command": {
+            "type": "string"
+          },
           "args": {
             "items": {
               "type": "string"
@@ -4473,6 +4482,20 @@
       "ProviderCreateInputBody": {
         "additionalProperties": false,
         "properties": {
+          "acp_args": {
+            "description": "ACP transport command arguments override.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "acp_command": {
+            "description": "ACP transport command binary override.",
+            "type": "string"
+          },
           "args": {
             "description": "Command arguments.",
             "items": {
@@ -4598,6 +4621,21 @@
       "ProviderPatch": {
         "additionalProperties": false,
         "properties": {
+          "ACPArgs": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "ACPCommand": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "Args": {
             "items": {
               "type": "string"
@@ -4679,7 +4717,9 @@
           "Name",
           "Base",
           "Command",
+          "ACPCommand",
           "Args",
+          "ACPArgs",
           "ArgsAppend",
           "OptionsSchemaMerge",
           "PromptMode",
@@ -4694,6 +4734,20 @@
       "ProviderPatchSetInputBody": {
         "additionalProperties": false,
         "properties": {
+          "acp_args": {
+            "description": "Override ACP transport command arguments.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "acp_command": {
+            "description": "Override ACP transport command binary.",
+            "type": "string"
+          },
           "args": {
             "description": "Override command arguments.",
             "items": {
@@ -4839,6 +4893,15 @@
       "ProviderResponse": {
         "additionalProperties": false,
         "properties": {
+          "acp_args": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "acp_command": {
+            "type": "string"
+          },
           "args": {
             "items": {
               "type": "string"
@@ -4890,6 +4953,15 @@
       "ProviderSpecJSON": {
         "additionalProperties": false,
         "properties": {
+          "acp_args": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "acp_command": {
+            "type": "string"
+          },
           "args": {
             "items": {
               "type": "string"
@@ -4927,6 +4999,20 @@
       "ProviderUpdateInputBody": {
         "additionalProperties": false,
         "properties": {
+          "acp_args": {
+            "description": "ACP transport command arguments override.",
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "acp_command": {
+            "description": "ACP transport command binary override.",
+            "type": "string"
+          },
           "args": {
             "description": "Command arguments.",
             "items": {
@@ -17656,6 +17742,16 @@
               "minLength": 1,
               "pattern": "\\S",
               "type": "string"
+            }
+          },
+          {
+            "description": "Bypass cached order-check responses and cached order history.",
+            "explode": false,
+            "in": "query",
+            "name": "fresh",
+            "schema": {
+              "description": "Bypass cached order-check responses and cached order history.",
+              "type": "boolean"
             }
           }
         ],

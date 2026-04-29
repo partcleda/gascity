@@ -1559,6 +1559,10 @@ func deepCopyProviderSpec(in ProviderSpec) ProviderSpec {
 	out.OptionDefaults = deepCopyStringMap(in.OptionDefaults)
 	out.OptionsSchema = deepCopyProviderOptions(in.OptionsSchema)
 	out.PrintArgs = append([]string(nil), in.PrintArgs...)
+	if in.ACPArgs != nil {
+		out.ACPArgs = make([]string, len(in.ACPArgs))
+		copy(out.ACPArgs, in.ACPArgs)
+	}
 	out.Base = copyStringPtr(in.Base)
 	out.EmitsPermissionWarning = copyBoolPtr(in.EmitsPermissionWarning)
 	out.SupportsACP = copyBoolPtr(in.SupportsACP)
@@ -1580,6 +1584,7 @@ func deepCopyOptionChoices(in []OptionChoice) []OptionChoice {
 	for i := range in {
 		out[i] = in[i]
 		out[i].FlagArgs = append([]string(nil), in[i].FlagArgs...)
+		out[i].FlagAliases = cloneStringSlices(in[i].FlagAliases)
 	}
 	return out
 }
