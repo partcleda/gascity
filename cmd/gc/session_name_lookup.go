@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gastownhall/gascity/internal/agent"
 	"github.com/gastownhall/gascity/internal/beads"
@@ -26,20 +27,24 @@ func createPoolSessionBead(
 	store beads.Store,
 	template string,
 	sessionBeads *sessionBeadSnapshot,
+	now time.Time,
 ) (beads.Bead, error) {
 	if store == nil {
 		return beads.Bead{}, fmt.Errorf("session store unavailable for pool template %q", template)
 	}
+	instanceToken := sessionpkg.NewInstanceToken()
 	meta := map[string]string{
-		"template":             template,
-		"agent_name":           template,
-		"state":                "creating",
-		"pending_create_claim": "true",
-		"session_origin":       "ephemeral",
-		"generation":           "1",
-		"continuation_epoch":   "1",
-		"instance_token":       sessionpkg.NewInstanceToken(),
-		poolManagedMetadataKey: boolMetadata(true),
+		"template":                  template,
+		"agent_name":                template,
+		"state":                     "creating",
+		"pending_create_claim":      "true",
+		"pending_create_started_at": pendingCreateStartedAtNow(now),
+		"session_origin":            "ephemeral",
+		"generation":                "1",
+		"continuation_epoch":        "1",
+		"instance_token":            instanceToken,
+		"session_name":              pendingPoolSessionName(template, instanceToken),
+		poolManagedMetadataKey:      boolMetadata(true),
 	}
 	bead, err := store.Create(beads.Bead{
 		Title:    targetBasename(template),
@@ -144,11 +149,66 @@ func normalizedSessionTemplate(bead beads.Bead, cfg *config.City) string {
 // beads with an agent_name field matching the query. If no agent_name match
 // is found, falls back to template/common_name matching.
 func findSessionNameByTemplate(store beads.Store, template string) string {
-	snapshot, err := loadSessionBeadSnapshot(store)
+	template = strings.TrimSpace(template)
+	if store == nil || template == "" {
+		return ""
+	}
+	if sn := findSessionNameByMetadata(store, "agent_name", template, true); sn != "" {
+		return sn
+	}
+	if sn := findSessionNameByAgentLabel(store, template); sn != "" {
+		return sn
+	}
+	if sn := findSessionNameByMetadata(store, "template", template, false); sn != "" {
+		return sn
+	}
+	return findSessionNameByMetadata(store, "common_name", template, false)
+}
+
+func findSessionNameByAgentLabel(store beads.Store, template string) string {
+	items, err := store.List(beads.ListQuery{Label: "agent:" + template})
 	if err != nil {
 		return ""
 	}
-	return snapshot.FindSessionNameByTemplate(template)
+	return chooseSessionNameForTemplate(store, items, true, "", "")
+}
+
+func findSessionNameByMetadata(store beads.Store, key, value string, agentNameMatch bool) string {
+	items, err := sessionpkg.ExactMetadataSessionCandidates(store, false, map[string]string{key: value})
+	if err != nil {
+		return ""
+	}
+	return chooseSessionNameForTemplate(store, items, agentNameMatch, key, value)
+}
+
+func chooseSessionNameForTemplate(store beads.Store, items []beads.Bead, agentNameMatch bool, key, value string) string {
+	var fallback string
+	for _, b := range items {
+		if !sessionpkg.IsSessionBeadOrRepairable(b) || b.Status == "closed" {
+			continue
+		}
+		sessionpkg.RepairEmptyType(store, &b)
+		if key != "" && strings.TrimSpace(b.Metadata[key]) != value {
+			continue
+		}
+		if agentNameMatch && isPoolManagedSessionBead(b) && sessionBeadAgentName(b) == b.Metadata["template"] {
+			continue
+		}
+		if !agentNameMatch && isPoolManagedSessionBead(b) {
+			continue
+		}
+		sessionName := strings.TrimSpace(b.Metadata["session_name"])
+		if sessionName == "" {
+			continue
+		}
+		if strings.TrimSpace(b.Metadata["configured_named_identity"]) != "" {
+			return sessionName
+		}
+		if fallback == "" {
+			fallback = sessionName
+		}
+	}
+	return fallback
 }
 
 // lookupSessionName resolves a qualified agent name to its bead-derived

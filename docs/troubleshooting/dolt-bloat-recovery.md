@@ -34,9 +34,10 @@ and verifying the result.
 - **Free disk space.** Dolt GC rewrites chunks into a new store before
   swapping; budget at least **2× the current `.dolt/` size** in free space
   on the same filesystem.
-- **Dolt 1.86.1 or newer.** This matches the floor enforced by Gas City's
-  managed Dolt tooling and ensures the listener/config knobs used by the
-  pack plus modern auto-GC behavior are available. Check with
+- **Final Dolt 1.86.2 or newer.** This matches the floor enforced by Gas
+  City's managed Dolt tooling and avoids the upstream GC/writer deadlock fixed
+  in dolthub/dolt commit `ccf7bde206`, which can hang `dolt_backup sync` under
+  heavy write load. Check with
   `dolt version`. If your binary rejects `--archive-level=1` (rare on
   modern releases), drop the flag and run plain
   `dolt gc` — archive compression is default-on in 1.75+ so the flag is
@@ -81,17 +82,24 @@ If GC finishes but the size barely moves, the chunks are nearly all live
 
 ## Prevention
 
-- **Keep Dolt at 1.86.1 or newer.** This matches Gas City's managed-Dolt
-  floor; newer releases ship improved auto-GC
-  heuristics and default archive compression.
+- **Keep Dolt at a final 1.86.2 or newer.** This matches Gas City's
+  managed-Dolt floor; newer releases ship improved auto-GC heuristics and
+  default archive compression.
 - **Let the dolt pack's `dolt-gc-nudge` order run continuously.** It
-  ships embedded in the dolt pack and fires every 6h by default. The
-  nudge catches the "bloated-but-stable" corner case where no single
-  write burst crosses Dolt's 125 MB auto-GC threshold. To opt out on a
-  given city, add `dolt-gc-nudge` to the city's `[orders] skip = [...]`
-  list (or to a rig-level `[[order.override]]`). Tune the trigger size
-  via the `GC_DOLT_GC_THRESHOLD_BYTES` environment variable
-  (default: 2 GiB) in the city's environment.
+  ships embedded in the dolt pack and fires `CALL DOLT_GC()` every 1h
+  by default, unconditionally. Gas City's managed-Dolt launch path now
+  forces `DOLT_GC_SCHEDULER=NONE`, which restores Dolt's configured
+  auto-GC behavior on multi-core hosts affected by
+  [dolthub/dolt#10944](https://github.com/dolthub/dolt/issues/10944).
+  The hourly nudge remains valuable as a belt-and-suspenders backstop
+  for the bd workload and as an unconditional recovery path if the
+  threshold-triggered auto-GC has nothing to do for a while. GC is
+  idempotent and near-free when there's nothing to reclaim, so running
+  it every hour is cheap. To opt out on a given city, add
+  `dolt-gc-nudge` to the city's `[orders] skip = [...]` list (or to a
+  rig-level `[[order.override]]`). To skip GC on small databases, set
+  `GC_DOLT_GC_THRESHOLD_BYTES` to a positive byte count in the city's
+  environment (default: 0 — run unconditionally).
 - **Mind `orders.max_timeout` if you set one.** The nudge order asks
   for a 24-hour timeout to accommodate serialized `CALL DOLT_GC()` runs
   on large stores. A city-level `orders.max_timeout` below 24h will cap the
